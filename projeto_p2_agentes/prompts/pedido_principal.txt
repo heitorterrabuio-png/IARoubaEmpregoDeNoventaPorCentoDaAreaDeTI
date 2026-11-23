@@ -1,0 +1,55 @@
+DEMANDA DE PROJETO WEB: EcoCiclo Consultoria Ambiental e Gestão de Resíduos
+
+1. CONTEXTO E OBJETIVO
+Desenvolver uma aplicação web estática completa, acessível, responsiva e segura para a "EcoCiclo Consultoria Ambiental e Gestão de Resíduos", voltada para condomínios residenciais/comerciais e pequenas e médias empresas (PMEs).
+O objetivo da aplicação é apresentar os serviços de consultoria em gestão sustentável de resíduos, evidenciar métricas de impacto ambiental e disponibilizar um formulário de contato demonstrativo com validação no navegador.
+
+2. ESTRUTURA VISUAL, CONTEÚDO E SEÇÕES OBRIGATÓRIAS
+- Cabeçalho (<header>) com identificação da marca EcoCiclo e menu de navegação semântico (<nav>) com links funcionais por âncora para as 4 seções:
+  1) Início (#inicio)
+  2) Sobre Nós (#sobre)
+  3) Soluções (#solucoes)
+  4) Contato (#contato)
+- Banner obrigatório em destaque no site (visível logo no topo ou área principal e reforçado próximo ao formulário), exibindo literalmente o seguinte texto:
+  "Atenção: Este site é uma aplicação acadêmica demonstrativa. O formulário não possui backend real e nenhuma mensagem será enviada externamente."
+- Seção Início (#inicio):
+  - Área Hero com título principal (<h1>), proposta de valor clara para condomínios e PMEs, e botão/link de chamada para ação (CTA) direcionando para #contato ou #solucoes.
+- Seção Sobre Nós (#sobre):
+  - Título (<h2>), missão e valores da EcoCiclo e bloco de métricas/indicadores de impacto ambiental (por exemplo: taxa de desvio de aterro, clientes atendidos, redução de custos operacionais ou toneladas recicladas).
+- Seção Soluções (#solucoes):
+  - Título (<h2>) e exatamente 3 cards de serviços estruturados semanticamente (<article> com <h3>):
+    1) PGRS e Diagnóstico Ambiental
+    2) Implantação de Coleta Seletiva e Capacitação
+    3) Monitoramento de Indicadores e Logística Reversa
+- Seção Contato (#contato):
+  - Título (<h2>), lembrete claro de que se trata de simulação acadêmica sem backend e formulário acessível (<form novalidate>) contendo os seguintes campos obrigatórios:
+    1) Nome (id="nome", <label for="nome">)
+    2) E-mail (id="email", type="email", <label for="email">)
+    3) Assunto (id="assunto", <label for="assunto">)
+    4) Mensagem (id="mensagem", <textarea>, <label for="mensagem">)
+  - Botão de envio acessível e região de feedback de erro/sucesso com aria-live="polite".
+- Rodapé (<footer>) semântico com identificação institucional da EcoCiclo e nota acadêmica.
+
+3. REQUISITOS TÉCNICOS, ACESSIBILIDADE E SEGURANÇA
+- HTML5 semântico com lang="pt-BR", metas charset="UTF-8" e viewport responsiva, uso adequado de <header>, <nav>, <main>, <section>, <article> e <footer>, e hierarquia rigorosa de títulos (<h1>, <h2>, <h3> sem pular níveis).
+- Acessibilidade (WCAG básico):
+  - Navegação integral via teclado usando a tecla Tab em ordem lógica.
+  - Estilo de foco claramente visível utilizando :focus-visible em links, botões e campos do formulário.
+  - Todos os campos do formulário associados a um <label> explícito via id/for.
+  - Paleta de cores com contraste legível entre texto e fundo (ex.: verde escuro institucional, off-white/branco e cinza grafite).
+- CSS3 modular (style.css) com abordagem mobile-first e media queries (@media) garantindo boa leitura e alinhamento em smartphones, tablets e desktops sem rolagem horizontal indesejada. Não utilizar frameworks ou CDNs externas.
+- JavaScript vanilla seguro (script.js):
+  - Validação completa no envio do formulário: bloquear envio se Nome, E-mail, Assunto ou Mensagem estiverem vazios (após trim) e validar formato de e-mail com expressão regular segura.
+  - Exibir mensagens claras de erro ou confirmação de simulação demonstrativa ao usuário utilizando ESTRITAMENTE textContent (proibido innerHTML, outerHTML, insertAdjacentHTML, document.write ou eval).
+  - Não utilizar handlers inline no HTML (onclick, onsubmit etc.); usar addEventListener no script.js com referências locais (style.css e script.js).
+  - Zero credenciais, tokens, URLs de APIs reais ou envio externo de dados.
+
+4. ARTEFATOS ESPERADOS
+- Aplicação web em output/site/:
+  - index.html
+  - style.css
+  - script.js
+- Documentação gerada pelos agentes em output/docs/:
+  - plano_tarefas.md
+  - resumo_implementacao.md
+  - parecer_qa.md
