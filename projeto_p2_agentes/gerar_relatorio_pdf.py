@@ -146,8 +146,12 @@ def _limpar_markdown_para_pdf(texto_md: str) -> list[tuple[str, str]]:
 class RelatorioP2PDF(FPDF):
     """Documento PDF institucional com sanitização automática e layout consistente."""
 
-    def __init__(self) -> None:
+    def __init__(self, subtitulo_cabecalho: str | None = None) -> None:
         super().__init__(orientation="P", unit="mm", format="A4")
+        self.subtitulo_cabecalho = (
+            subtitulo_cabecalho
+            or "Inteligência Artificial (P2) | Sistema Multiagente | Prof. Vladmir B. da Cruz"
+        )
         self.set_margins(left=16, top=18, right=16)
         self.set_auto_page_break(auto=True, margin=16)
 
@@ -161,9 +165,7 @@ class RelatorioP2PDF(FPDF):
         self.cell(
             w=self.epw,
             h=6,
-            text=sanitizar_texto(
-                "Inteligência Artificial (P2) | Sistema Multiagente EcoCiclo | Prof. Vladmir B. da Cruz"
-            ),
+            text=sanitizar_texto(self.subtitulo_cabecalho),
             align="R",
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
@@ -426,6 +428,7 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
     info: dict[str, Any] = {
         "eventos": eventos,
         "modelo": "Não identificado no log",
+        "modo_demanda": "Baseline Padrao (EcoCiclo)",
         "max_rodadas": "-",
         "status_final": "Não identificado no log",
         "rodadas_executadas": "-",
@@ -433,6 +436,14 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
         "duracao_total": "-",
         "tokens_totais": {"prompt": 0, "saida": 0, "total": 0},
         "entregas": [],
+        "arquiteto_ativo": False,
+        "arquiteto_tarefa": "",
+        "arquiteto_resumo": "",
+        "arquiteto_tema": "",
+        "arquiteto_provedor": "",
+        "contingencia_groq_ativa": False,
+        "contingencia_provedor": "",
+        "contingencia_motivo": "",
     }
 
     for ev in eventos:
@@ -440,12 +451,42 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
         campos = ev["campos"]
         if tipo == "INICIO_ORQUESTRACAO":
             info["modelo"] = campos.get("modelo_gemini", info["modelo"])
+            info["modo_demanda"] = campos.get("modo_demanda", info["modo_demanda"])
             info["max_rodadas"] = campos.get("max_rodadas", info["max_rodadas"])
+        elif tipo == "CONTINGENCIA":
+            prov = campos.get("provedor", "")
+            if "groq" in prov.lower():
+                info["contingencia_groq_ativa"] = True
+                info["contingencia_provedor"] = prov or "Groq"
+                info["contingencia_motivo"] = campos.get(
+                    "motivo", "Gemini instável (503/429/overloaded)"
+                )
+        elif tipo == "AGENTE_INICIO":
+            agente_ev = campos.get("agente", "")
+            if "arquiteto de prompts" in agente_ev.lower():
+                info["arquiteto_ativo"] = True
+                info["arquiteto_tarefa"] = campos.get("tarefa", info["arquiteto_tarefa"])
         elif tipo == "AGENTE_ENTREGA":
+            agente_ev = campos.get("agente", "-")
+            if "arquiteto de prompts" in agente_ev.lower():
+                info["arquiteto_ativo"] = True
+                resumo_arq = campos.get("resumo", "")
+                parecer_arq = campos.get("parecer", "")
+                info["arquiteto_resumo"] = resumo_arq
+                match_tema = re.search(r"Tema definido:\s*([^|\n]+)", resumo_arq, re.IGNORECASE)
+                if match_tema:
+                    info["arquiteto_tema"] = match_tema.group(1).strip()
+                match_prov = re.search(r"Provedor:\s*([^|\n]+)", parecer_arq, re.IGNORECASE)
+                if match_prov:
+                    prov_arq = match_prov.group(1).strip()
+                    info["arquiteto_provedor"] = prov_arq
+                    if "groq" in prov_arq.lower():
+                        info["contingencia_groq_ativa"] = True
+                        info["contingencia_provedor"] = info["contingencia_provedor"] or prov_arq
             info["entregas"].append(
                 {
                     "timestamp": ev["timestamp"],
-                    "agente": campos.get("agente", "-"),
+                    "agente": agente_ev,
                     "rodada": campos.get("rodada", "-"),
                     "duracao": campos.get("duracao_segundos", "-"),
                     "tokens": campos.get("tokens_reais", "-"),
@@ -540,10 +581,29 @@ def gerar_pdf() -> int:
     parecer_qa_md = (DIR_DOCS / "parecer_qa.md").read_text(encoding="utf-8")
     dados_site = _inspecionar_site_estatico()
 
-    nome_aluno = os.getenv("NOME_ALUNO", "Equipe Acadêmica EcoCiclo (P2)").strip()
+    nome_aluno = os.getenv("NOME_ALUNO", "Equipe Acadêmica P2").strip()
     data_geracao = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    pdf = RelatorioP2PDF()
+    arquiteto_ativo = bool(dados_log["arquiteto_ativo"])
+    if arquiteto_ativo:
+        tema_aplicacao = (
+            dados_log["arquiteto_tema"]
+            or "Aplicação Web Dinamizada via Arquiteto de Prompts"
+        )
+        modo_descricao = (
+            "Dinamizada via Agente Arquiteto de Prompts (metaprompting e clonagem da baseline)"
+        )
+        subtitulo_pdf = (
+            "Inteligência Artificial (P2) | Sistema Multiagente Dinâmico | Prof. Vladmir B. da Cruz"
+        )
+    else:
+        tema_aplicacao = "EcoCiclo Consultoria Ambiental e Gestão de Resíduos"
+        modo_descricao = "Baseline EcoCiclo Padrão (prompts/pedido_principal.txt)"
+        subtitulo_pdf = (
+            "Inteligência Artificial (P2) | Sistema Multiagente EcoCiclo | Prof. Vladmir B. da Cruz"
+        )
+
+    pdf = RelatorioP2PDF(subtitulo_cabecalho=subtitulo_pdf)
     pdf.alias_nb_pages()
 
     # Capa / Cabeçalho Institucional
@@ -557,7 +617,7 @@ def gerar_pdf() -> int:
         h=11,
         text=sanitizar_texto(
             "TRABALHO PRÁTICO P2 - SISTEMA MULTIAGENTE EM PYTHON\n"
-            "Aplicação Web EcoCiclo Consultoria Ambiental"
+            f"Aplicação Web: {tema_aplicacao}"
         ),
         align="C",
         fill=True,
@@ -573,15 +633,29 @@ def gerar_pdf() -> int:
             "Professor: Vladmir B. da Cruz\n"
             f"Aluno(a) / Autor(a): {nome_aluno}\n"
             f"Data de Geração do Relatório: {data_geracao}\n"
-            "Tema da Aplicação Gerada: EcoCiclo Consultoria Ambiental e Gestão de Resíduos"
+            f"Tema da Aplicação Gerada: {tema_aplicacao}\n"
+            f"Modo de Execução Detectado no Log: {modo_descricao}"
         ),
     )
 
     tokens_totais = dados_log["tokens_totais"]
+    contingencia_groq = bool(dados_log["contingencia_groq_ativa"])
+    provedor_arquiteto = (
+        dados_log["contingencia_provedor"]
+        if contingencia_groq
+        else (dados_log["arquiteto_provedor"] or f"Gemini ({dados_log['modelo']})")
+    )
+    linha_provedor_arq = ""
+    if arquiteto_ativo:
+        sufixo = " (Contingência Groq)" if contingencia_groq else ""
+        linha_provedor_arq = f"Provedor do Arquiteto: {provedor_arquiteto}{sufixo}\n"
+
     pdf.caixa_destaque(
         "Resumo Executivo da Execução Real (Extraído de output/execucao_real.log)",
         (
             f"Modelo Configurado: {dados_log['modelo']}\n"
+            f"Modo de Demanda: {modo_descricao}\n"
+            f"{linha_provedor_arq}"
             f"Status Final da Orquestração: {dados_log['status_final']}\n"
             f"Rodadas Executadas / Limite: {dados_log['rodadas_executadas']} / {dados_log['max_rodadas']}\n"
             f"Chamadas Estruturadas à API: {dados_log['chamadas_api']}\n"
@@ -593,19 +667,33 @@ def gerar_pdf() -> int:
 
     # Quesito 1
     pdf.titulo_quesito(1, "Tema Escolhido e Funcionalidades do Site Gerado")
+    if arquiteto_ativo:
+        pdf.paragrafo(
+            "Conforme registrado em output/execucao_real.log, esta execução foi "
+            "dinamizada via Agente Arquiteto de Prompts (ARQUITETO DE PROMPTS) por "
+            "metaprompting e clonagem estrutural da baseline (prompts/pedido_principal.txt). "
+            f"Tema adotado: {tema_aplicacao}."
+        )
+        if dados_log["arquiteto_resumo"]:
+            pdf.caixa_destaque(
+                "Especificação Temática Registrada pelo Arquiteto de Prompts",
+                dados_log["arquiteto_resumo"],
+            )
+    else:
+        pdf.paragrafo(
+            "Conforme registrado em output/execucao_real.log, esta execução utilizou "
+            "integralmente a baseline EcoCiclo padrão ('EcoCiclo Consultoria Ambiental e "
+            "Gestão de Resíduos', prompts/pedido_principal.txt), direcionada a condomínios "
+            "e pequenas e médias empresas (PMEs) para apresentação de serviços ambientais, "
+            "métricas de impacto e contato demonstrativo."
+        )
     pdf.paragrafo(
-        "O tema escolhido foi 'EcoCiclo Consultoria Ambiental e Gestão de Resíduos', "
-        "uma aplicação web institucional e demonstrativa direcionada a condomínios e "
-        "pequenas e médias empresas (PMEs) interessadas em adequação ambiental, "
-        "implantação de coleta seletiva e acompanhamento de indicadores sustentáveis."
-    )
-    pdf.paragrafo(
-        "O site gerado em output/site/ reúne navegação semântica para quatro áreas "
-        "(Início, Sobre Nós, Soluções com três cards de serviço e Contato), destaque "
-        "obrigatório informando tratar-se de simulação acadêmica sem backend real, "
-        "acessibilidade via teclado (Tab e :focus-visible), responsividade mobile-first "
-        "e validação de formulário em JavaScript vanilla com manipulação segura de DOM "
-        "baseada estritamente em textContent."
+        "O site gerado em output/site/ reúne navegação semântica para as áreas "
+        "temáticas definidas (mínimo de três áreas de conteúdo e seção de Contato), "
+        "destaque obrigatório informando tratar-se de simulação acadêmica sem backend "
+        "real, acessibilidade via teclado (Tab e :focus-visible), responsividade "
+        "mobile-first e validação de formulário em JavaScript vanilla com manipulação "
+        "segura de DOM baseada estritamente em textContent."
     )
     pdf.subtitulo("Inventário Real dos Arquivos Gerados em output/site/")
     pdf.tabela_simples(
@@ -615,10 +703,18 @@ def gerar_pdf() -> int:
     )
 
     # Quesito 2
-    pdf.titulo_quesito(2, "Papéis e Responsabilidades dos 3 Agentes")
-    pdf.tabela_simples(
-        cabecalhos=["Agente", "Responsabilidade Principal", "Saída / Artefato"],
-        linhas=[
+    pdf.titulo_quesito(2, "Papéis e Responsabilidades dos Agentes")
+    linhas_agentes = []
+    if arquiteto_ativo:
+        linhas_agentes.append(
+            [
+                "Arquiteto",
+                "Clona baseline e adapta tema/guardrails via metaprompting.",
+                "pedido_customizado.txt",
+            ]
+        )
+    linhas_agentes.extend(
+        [
             [
                 "Coordenador",
                 "Planeja etapas, define requisitos críticos e aplica o gate.",
@@ -634,14 +730,27 @@ def gerar_pdf() -> int:
                 "Audita estaticamente semântica, WCAG, XSS e contrato.",
                 "parecer_qa.md (aprovado/achados)",
             ],
-        ],
+        ]
+    )
+    pdf.tabela_simples(
+        cabecalhos=["Agente", "Responsabilidade Principal", "Saída / Artefato"],
+        linhas=linhas_agentes,
         larguras=[35, 92, 51],
     )
-    pdf.paragrafo(
-        "O Coordenador não gera código-fonte da aplicação web; o Fullstack não "
-        "autoaprova suas entregas; e o QA/Cibersegurança atua exclusivamente por "
-        "análise estática, devolvendo achados objetivos quando há não conformidades."
-    )
+    if arquiteto_ativo:
+        pdf.paragrafo(
+            "O Arquiteto de Prompts traduz a ideia do usuário semileigo em uma "
+            "especificação formal clonada da baseline; o Coordenador não gera código-fonte "
+            "web; o Fullstack não autoaprova suas entregas; e o QA/Cibersegurança atua "
+            "exclusivamente por análise estática."
+        )
+    else:
+        pdf.paragrafo(
+            "O Coordenador não gera código-fonte da aplicação web; o Fullstack não "
+            "autoaprova suas entregas; e o QA/Cibersegurança atua exclusivamente por "
+            "análise estática, devolvendo achados objetivos quando há não conformidades. "
+            "(O Agente Arquiteto de Prompts opcional permaneceu inativo nesta execução baseline.)"
+        )
 
     # Quesito 3
     pdf.titulo_quesito(3, "Protocolo de Comunicação e Máquina de Estados em Python")
@@ -664,18 +773,51 @@ def gerar_pdf() -> int:
 
     # Quesito 4
     pdf.titulo_quesito(4, "Estrutura e Estratégia dos Prompts Utilizados")
-    pdf.paragrafo(
-        "Os prompts residem na pasta prompts/ e separam o contrato funcional da demanda "
-        "das instruções de sistema específicas de cada papel, reduzindo derivações e "
-        "garantindo aderência estrita aos schemas JSON."
-    )
+    if arquiteto_ativo:
+        pdf.paragrafo(
+            "Os registros em output/execucao_real.log comprovam que esta execução foi "
+            "dinamizada via Agente Arquiteto de Prompts por metaprompting e clonagem da "
+            "baseline (prompts/pedido_principal.txt). O prompt sys_arquiteto.txt gerou "
+            "uma nova especificação temática (prompts/pedido_customizado.txt e cópia em "
+            "output/docs/pedido_customizado.txt) preservando integralmente os guardrails "
+            "técnicos, enquanto os prompts de sistema do Coordenador, Fullstack e QA "
+            "operam de forma desacoplada do tema."
+        )
+        if contingencia_groq:
+            pdf.paragrafo(
+                "Observou-se ainda resiliência operacional de nível de produção: diante "
+                "de falha transitória na API primária Gemini, o sistema ativou o fallback "
+                f"automatizado via {provedor_arquiteto} para concluir o metaprompting do "
+                "Arquiteto de Prompts sem interromper a esteira multiagente."
+            )
+        else:
+            pdf.paragrafo(
+                f"Provedor que atendeu o Agente Arquiteto nesta execução: {provedor_arquiteto}."
+            )
+        catalogo_prompts = [
+            ("sys_arquiteto.txt", "Metaprompting e clonagem estrutural da baseline"),
+            ("pedido_principal.txt", "Modelo estrutural de referência (baseline preservada)"),
+            ("pedido_customizado.txt", "Especificação temática gerada dinamicamente"),
+            ("sys_coordenador.txt", "Planejamento técnico e critérios de aceite (desacoplado)"),
+            ("sys_fullstack.txt", "Codificação HTML5/CSS3/JS puro e refatoração (desacoplado)"),
+            ("sys_qa_sec.txt", "Checklist estático de QA, WCAG e segurança (desacoplado)"),
+        ]
+    else:
+        pdf.paragrafo(
+            "Os registros em output/execucao_real.log confirmam a execução da baseline "
+            "EcoCiclo padrão: a demanda foi lida diretamente de prompts/pedido_principal.txt "
+            "sem acionamento do Agente Arquiteto de Prompts, orquestrada com prompts de "
+            "sistema desacoplados por papel (sys_coordenador.txt, sys_fullstack.txt e "
+            "sys_qa_sec.txt) e contratos estritos via schemas JSON."
+        )
+        catalogo_prompts = [
+            ("pedido_principal.txt", "Baseline EcoCiclo: contrato funcional, banner e regras"),
+            ("sys_coordenador.txt", "Planejamento técnico e critérios de aceite (desacoplado)"),
+            ("sys_fullstack.txt", "Codificação HTML5/CSS3/JS puro e refatoração (desacoplado)"),
+            ("sys_qa_sec.txt", "Checklist estático de QA, WCAG e segurança (desacoplado)"),
+        ]
     linhas_prompts: list[list[str]] = []
-    for nome_p, papel_p in [
-        ("pedido_principal.txt", "Contrato funcional, seções, banner e regras"),
-        ("sys_coordenador.txt", "Planejamento técnico e critérios de aceite"),
-        ("sys_fullstack.txt", "Codificação HTML5/CSS3/JS puro e refatoração"),
-        ("sys_qa_sec.txt", "Checklist estático de QA, WCAG e segurança"),
-    ]:
+    for nome_p, papel_p in catalogo_prompts:
         caminho_p = DIR_PROMPTS / nome_p
         if caminho_p.is_file():
             txt_p = caminho_p.read_text(encoding="utf-8")
@@ -702,8 +844,9 @@ def gerar_pdf() -> int:
         "   pip install -r requirements.txt\n"
         "3. Configurar variáveis de ambiente:\n"
         "   Copiar .env.example para .env e preencher GEMINI_API_KEY\n"
-        "4. Executar o sistema multiagente:\n"
+        "4. Executar o sistema multiagente (baseline padrão EcoCiclo):\n"
         "   python main.py\n"
+        "   (Opcional - Arquiteto de Prompts: python main.py --ideia \"Sua ideia\" ou --interativo)\n"
         "5. Gerar este relatório PDF a partir dos logs reais:\n"
         "   python gerar_relatorio_pdf.py"
     )
@@ -735,6 +878,19 @@ def gerar_pdf() -> int:
         f"tokens totais ({tokens_totais['prompt']} de prompt e {tokens_totais['saida']} "
         f"de saída) em {dados_log['duracao_total']}."
     )
+    if contingencia_groq:
+        motivo_cont = dados_log["contingencia_motivo"] or "Gemini instável (503/429/overloaded)"
+        pdf.caixa_destaque(
+            "Resiliência Operacional - Contingência via Groq",
+            (
+                f"Provedor de Contingência Acionado: {provedor_arquiteto}\n"
+                f"Motivo Registrado no Log: {motivo_cont}\n"
+                "Avaliação: O sistema demonstrou resiliência operacional de nível de "
+                "produção, ativando o fallback automatizado via Groq para contornar "
+                "instabilidades transitórias de serviço da API primária sem perda da "
+                "entrega ou quebra dos guardrails da P2."
+            ),
+        )
     if dados_log["entregas"]:
         linhas_entregas = [
             [

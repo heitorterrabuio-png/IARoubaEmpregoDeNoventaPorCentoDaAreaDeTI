@@ -12,6 +12,47 @@ from typing import Any, Callable
 from google import genai
 from google.genai import errors, types
 
+try:
+    from groq import Groq
+
+    GROQ_DISPONIVEL = True
+except ImportError:
+    Groq = None  # type: ignore[assignment]
+    GROQ_DISPONIVEL = False
+
+SCHEMA_ARQUITETO_PROMPTS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tema_definido": {
+            "type": "string",
+            "description": "Nome formal e nicho da aplicação web adaptada.",
+        },
+        "publico_alvo": {
+            "type": "string",
+            "description": "Público-alvo e proposta de valor.",
+        },
+        "areas_tematicas": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "As 3 áreas temáticas de conteúdo para o menu.",
+        },
+        "pedido_estruturado_txt": {
+            "type": "string",
+            "description": (
+                "Texto completo da especificação técnica adaptada, clonando "
+                "a estrutura de pedido_principal.txt com todas as regras de "
+                "acessibilidade, segurança, banner de aviso e semântica."
+            ),
+        },
+    },
+    "required": [
+        "tema_definido",
+        "publico_alvo",
+        "areas_tematicas",
+        "pedido_estruturado_txt",
+    ],
+}
+
 SCHEMA_COORDENADOR: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -99,7 +140,7 @@ class ErroExecucaoAgente(RuntimeError):
 
 
 class EquipeAgentes:
-    """Encapsula as chamadas estruturadas à API Gemini para os 3 agentes do projeto."""
+    """Encapsula as chamadas estruturadas à API Gemini para os agentes do projeto."""
 
     def __init__(
         self,
@@ -117,7 +158,7 @@ class EquipeAgentes:
             )
 
         self.modelo = (
-            modelo or os.getenv("GEMINI_MODEL", "gemini-3.8-flash") or "gemini-3.8-flash"
+            modelo or os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
         ).strip()
         self.on_retry = on_retry
         self.timeout_segundos = max(1, int(timeout_segundos))
@@ -128,6 +169,22 @@ class EquipeAgentes:
         )
         self.client = self._criar_cliente(chave, self.timeout_segundos)
 
+        self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
+        self.groq_model = (
+            os.getenv("GROQ_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b"
+        ).strip()
+        self.groq_client: Any = None
+        self.ultimo_motivo_contingencia: str = ""
+        if GROQ_DISPONIVEL and self.groq_api_key and Groq is not None:
+            try:
+                self.groq_client = Groq(
+                    api_key=self.groq_api_key,
+                    timeout=float(self.timeout_segundos),
+                )
+            except TypeError:
+                self.groq_client = Groq(api_key=self.groq_api_key)
+
+        self.sys_arquiteto = self._ler_prompt("sys_arquiteto.txt")
         self.sys_coordenador = self._ler_prompt("sys_coordenador.txt")
         self.sys_fullstack = self._ler_prompt("sys_fullstack.txt")
         self.sys_qa_sec = self._ler_prompt("sys_qa_sec.txt")
@@ -349,6 +406,177 @@ class EquipeAgentes:
             "tokens": tokens,
             "duracao": duracao,
         }
+
+    def _chamar_groq_arquiteto(
+        self, prompt_sistema: str, prompt_usuario: str
+    ) -> dict[str, Any]:
+        """Executa chamada de contingência via Groq com saída JSON estruturada."""
+        if not self.groq_client:
+            raise ErroExecucaoAgente(
+                "Cliente Groq não inicializado ou chave GROQ_API_KEY ausente."
+            )
+
+        sistema_reforcado = (
+            f"{prompt_sistema}\n\n"
+            "IMPORTANTE: Sua resposta DEVE ser estritamente um objeto JSON válido com as chaves: "
+            '"tema_definido" (string), "publico_alvo" (string), "areas_tematicas" (array de strings) '
+            'e "pedido_estruturado_txt" (string contendo a demanda completa clonada com todas as '
+            "regras de acessibilidade, banner acadêmico e segurança)."
+        )
+
+        inicio = time.perf_counter()
+        try:
+            chat_completion = self.groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": sistema_reforcado},
+                    {"role": "user", "content": prompt_usuario},
+                ],
+                model=self.groq_model,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+        except Exception as exc:
+            raise ErroExecucaoAgente(
+                f"Falha na chamada de contingência via Groq ({self.groq_model}): {exc}"
+            ) from exc
+        duracao = float(time.perf_counter() - inicio)
+
+        conteudo = "{}"
+        choices = getattr(chat_completion, "choices", None)
+        if choices and len(choices) > 0:
+            conteudo = getattr(choices[0].message, "content", None) or "{}"
+
+        try:
+            dados = json.loads(conteudo)
+        except json.JSONDecodeError as exc:
+            raise ErroExecucaoAgente(
+                f"Falha ao fazer parse JSON da resposta de contingência da Groq: {exc}"
+            ) from exc
+
+        if not isinstance(dados, dict):
+            raise ErroExecucaoAgente(
+                "Resposta de contingência da Groq não retornou um objeto JSON válido."
+            )
+
+        chaves_obrigatorias = [
+            "tema_definido",
+            "publico_alvo",
+            "areas_tematicas",
+            "pedido_estruturado_txt",
+        ]
+        for chave in chaves_obrigatorias:
+            if chave not in dados or not dados[chave]:
+                raise ErroExecucaoAgente(
+                    f"Campo obrigatório '{chave}' ausente ou vazio na resposta da Groq."
+                )
+
+        if not isinstance(dados["areas_tematicas"], list):
+            raise ErroExecucaoAgente(
+                "Campo 'areas_tematicas' retornado pela Groq deve ser uma lista não vazia."
+            )
+        if not str(dados["pedido_estruturado_txt"]).strip():
+            raise ErroExecucaoAgente(
+                "Campo 'pedido_estruturado_txt' retornado pela Groq está vazio."
+            )
+
+        usage = getattr(chat_completion, "usage", None)
+        prompt_t = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+        saida_t = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+        total_t = (
+            int(getattr(usage, "total_tokens", 0) or (prompt_t + saida_t))
+            if usage
+            else 0
+        )
+        tokens = {"prompt": prompt_t, "saida": saida_t, "total": total_t}
+
+        return {
+            "dados": dados,
+            "tokens": tokens,
+            "duracao": duracao,
+            "provedor": f"Groq ({self.groq_model})",
+        }
+
+    def executar_arquiteto_prompts(
+        self, ideia_usuario: str, pedido_referencia: str
+    ) -> dict[str, Any]:
+        """Executa o Agente Arquiteto com fallback automático para Groq caso o Gemini falhe.
+
+        Retorna um dicionário padronizado: {
+            'dados': dict,     # Dados validados pelo SCHEMA_ARQUITETO_PROMPTS
+            'tokens': dict,    # Dicionário {'prompt': int, 'saida': int, 'total': int}
+            'duracao': float,  # Duração da chamada em segundos
+            'provedor': str,   # Identificação do provedor que atendeu a requisição
+        }
+        """
+        self.ultimo_motivo_contingencia = ""
+        ideia_limpa = str(ideia_usuario or "").strip()
+        if not ideia_limpa:
+            raise ErroExecucaoAgente(
+                "A ideia do usuário não pode estar vazia ao acionar o Arquiteto de Prompts."
+            )
+
+        prompt_usuario = (
+            "Converta a ideia do usuário abaixo em uma especificação técnica completa "
+            "para a aplicação web, clonando rigorosamente a estrutura, o tom formal e "
+            "todos os guardrails do pedido de referência.\n\n"
+            f"=== IDEIA DO USUÁRIO ===\n{ideia_limpa}\n\n"
+            f"=== PEDIDO DE REFERÊNCIA (MODELO ESTRUTURAL) ===\n{pedido_referencia}"
+        )
+
+        try:
+            resultado = self._chamar_gemini(
+                nome_agente="ARQUITETO DE PROMPTS",
+                instrucao_sistema=self.sys_arquiteto,
+                conteudo_usuario=prompt_usuario,
+                schema=SCHEMA_ARQUITETO_PROMPTS,
+                temperatura=0.3,
+            )
+
+            dados = resultado["dados"]
+            if not str(dados.get("pedido_estruturado_txt", "")).strip():
+                raise ErroExecucaoAgente(
+                    "O Agente Arquiteto retornou 'pedido_estruturado_txt' vazio."
+                )
+            if not isinstance(dados.get("areas_tematicas"), list) or not dados["areas_tematicas"]:
+                raise ErroExecucaoAgente(
+                    "O Agente Arquiteto deve retornar uma lista não vazia em 'areas_tematicas'."
+                )
+
+            resultado["provedor"] = f"Gemini ({self.modelo})"
+            return resultado
+        except Exception as erro_gemini:
+            msg_erro = str(erro_gemini).lower()
+            erros_transitorios = (
+                "503",
+                "429",
+                "unavailable",
+                "resource_exhausted",
+                "overloaded",
+                "sobrecarregado",
+                "indisponível",
+                "indisponivel",
+                "cota",
+                "timeout",
+                "timed out",
+                "temporarily unavailable",
+                "rate limit",
+                "conexão",
+                "conexao",
+            )
+            eh_transitorio = any(termo in msg_erro for termo in erros_transitorios)
+
+            if eh_transitorio and self.groq_client is not None:
+                self.ultimo_motivo_contingencia = str(erro_gemini)
+                print(
+                    f"\n[AVISO] Gemini indisponível após tentativas ({erro_gemini}). "
+                    f"Acionando contingência via Groq ({self.groq_model})..."
+                )
+                return self._chamar_groq_arquiteto(
+                    prompt_sistema=self.sys_arquiteto,
+                    prompt_usuario=prompt_usuario,
+                )
+
+            raise
 
     def executar_coordenador_planejamento(self, demanda: str) -> dict[str, Any]:
         """Aciona o Coordenador para produzir o plano de trabalho e critérios de aceite."""

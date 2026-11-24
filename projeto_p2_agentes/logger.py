@@ -10,6 +10,24 @@ from typing import Any
 
 SEPARADOR = "=" * 72
 
+NOMES: dict[str, str] = {
+    "arquiteto": "ARQUITETO DE PROMPTS",
+    "coordenador": "COORDENADOR",
+    "fullstack": "FULLSTACK",
+    "qa_sec": "QA/CIBERSEGURANCA",
+    "qa_ciberseguranca": "QA/CIBERSEGURANCA",
+    "orquestrador": "ORQUESTRADOR",
+}
+
+ETAPAS: dict[str, str] = {
+    "arquiteto": "Arquitetura de Prompts e Adaptacao Tematica",
+    "arquitetura_prompts": "Arquitetura de Prompts e Adaptacao Tematica",
+    "planejamento": "Planejamento Inicial",
+    "implementacao": "Implementacao Inicial Fullstack",
+    "refatoracao": "Refatoracao Fullstack",
+    "auditoria": "Auditoria Estatica de Qualidade e Seguranca",
+}
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
@@ -99,6 +117,18 @@ class Monitor:
         linhas.append(SEPARADOR)
         self._escrever("\n".join(linhas))
 
+    @staticmethod
+    def _resolver_nome(agente: str) -> str:
+        """Resolve identificador de agente pelo dicionário NOMES, preservando fallback."""
+        chave = limpar_texto(agente)
+        return NOMES.get(chave.lower(), chave)
+
+    @staticmethod
+    def _resolver_etapa(etapa: str) -> str:
+        """Resolve identificador de etapa pelo dicionário ETAPAS, preservando fallback."""
+        chave = limpar_texto(etapa)
+        return ETAPAS.get(chave.lower(), chave)
+
     def agente_inicio(
         self,
         agente: str,
@@ -110,9 +140,9 @@ class Monitor:
         """Anuncia o início da execução de um agente específico."""
         self.evento(
             "AGENTE_INICIO",
-            agente=agente,
+            agente=self._resolver_nome(agente),
             origem=origem,
-            etapa=etapa,
+            etapa=self._resolver_etapa(etapa),
             rodada=rodada,
             tarefa=tarefa,
         )
@@ -129,7 +159,7 @@ class Monitor:
         """Registra a entrega de um agente com resumo, parecer, tempo e tokens reais."""
         self.evento(
             "AGENTE_ENTREGA",
-            agente=agente,
+            agente=self._resolver_nome(agente),
             rodada=rodada,
             resumo=resumo,
             parecer=parecer,
@@ -186,7 +216,7 @@ class Monitor:
         """Registra erros operacionais ou de API no terminal e no log."""
         self.evento(
             "ERRO_EXECUCAO",
-            agente=agente,
-            etapa=etapa,
+            agente=self._resolver_nome(agente),
+            etapa=self._resolver_etapa(etapa),
             detalhe=detalhe,
         )

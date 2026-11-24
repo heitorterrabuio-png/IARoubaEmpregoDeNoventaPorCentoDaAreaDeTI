@@ -1,7 +1,8 @@
-"""Orquestrador determinístico do sistema multiagente EcoCiclo (P2)."""
+"""Orquestrador determinístico do sistema multiagente para geração web (P2)."""
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import time
@@ -120,8 +121,55 @@ def _salvar_site(arquivos: dict[str, str]) -> None:
         destino.write_text(conteudo, encoding="utf-8")
 
 
-def main() -> int:
+def _parsear_argumentos(argv: list[str] | None = None) -> argparse.Namespace:
+    """Interpreta as flags opcionais de linha de comando para customização temática."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Orquestrador multiagente P2. Sem flags, executa a baseline padrão "
+            "(prompts/pedido_principal.txt)."
+        )
+    )
+    parser.add_argument(
+        "--ideia",
+        type=str,
+        default=None,
+        help="Ideia temática para gerar especificação customizada via Arquiteto de Prompts.",
+    )
+    parser.add_argument(
+        "--interativo",
+        action="store_true",
+        help="Solicita interativamente a ideia temática no terminal via input().",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """Ponto de entrada do orquestrador multiagente P2."""
+    args = _parsear_argumentos(argv)
+
+    ideia_usuario: str | None = None
+    if args.ideia is not None:
+        ideia_usuario = args.ideia.strip()
+        if not ideia_usuario:
+            print(
+                "\n[AVISO] A flag --ideia foi fornecida sem texto. "
+                "Informe uma descrição não vazia ou execute 'python main.py' para a baseline padrão.\n"
+            )
+            return 1
+    elif args.interativo:
+        try:
+            ideia_usuario = input(
+                "Descreva a ideia da aplicação web que deseja gerar: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[AVISO] Entrada interativa cancelada pelo usuário.\n")
+            return 1
+        if not ideia_usuario:
+            print(
+                "\n[AVISO] Nenhuma ideia informada no modo interativo. Encerrando sem alterar arquivos.\n"
+            )
+            return 1
+
     load_dotenv(dotenv_path=BASE_DIR / ".env")
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -135,7 +183,10 @@ def main() -> int:
         )
         return 1
 
-    modelo = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+    modelo = (
+        os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
+        or "gemini-3.5-flash-lite"
+    )
     max_rodadas = _ler_max_rodadas()
 
     DIR_SITE.mkdir(parents=True, exist_ok=True)
@@ -155,11 +206,17 @@ def main() -> int:
         )
         return 1
 
-    demanda = caminho_pedido.read_text(encoding="utf-8").strip()
+    pedido_referencia = caminho_pedido.read_text(encoding="utf-8").strip()
+    modo_demanda = (
+        "Arquiteto de Prompts (Customizado)"
+        if ideia_usuario
+        else "Baseline Padrao (EcoCiclo)"
+    )
 
     monitor.evento(
         "INICIO_ORQUESTRACAO",
-        projeto="EcoCiclo Consultoria Ambiental (Sistema Multiagente P2)",
+        projeto="Sistema Multiagente P2 - Geracao Web Estruturada",
+        modo_demanda=modo_demanda,
         modelo_gemini=modelo,
         max_rodadas=max_rodadas,
         politica_execucao=(
@@ -186,6 +243,89 @@ def main() -> int:
             pasta_prompts=DIR_PROMPTS,
             on_retry=_registrar_retry,
         )
+
+        # Etapa 0 (opcional via CLI): Agente Arquiteto de Prompts
+        if ideia_usuario:
+            monitor.agente_inicio(
+                agente="arquiteto",
+                origem="Usuario (CLI)",
+                etapa="arquitetura_prompts",
+                rodada=0,
+                tarefa=(
+                    "Clonar estrutura de pedido_principal.txt e adaptar especificação "
+                    f"para a ideia: {ideia_usuario}"
+                ),
+            )
+            try:
+                res_arq = equipe.executar_arquiteto_prompts(ideia_usuario, pedido_referencia)
+            except ErroExecucaoAgente as exc_arq:
+                if equipe.groq_client is None:
+                    motivo_sem_groq = (
+                        "Fallback via Groq nao configurado (GROQ_API_KEY ausente no .env "
+                        "ou biblioteca groq nao instalada)."
+                    )
+                    monitor.evento(
+                        "CONTINGENCIA_NAO_CONFIGURADA",
+                        agente="ARQUITETO DE PROMPTS",
+                        detalhe=motivo_sem_groq,
+                        erro_primario=str(exc_arq),
+                    )
+                    print(
+                        "\n[DIAGNÓSTICO DE CONTINGÊNCIA] O provedor primário (Gemini) falhou:\n"
+                        f"  {exc_arq}\n"
+                        "O fallback automático via Groq não estava habilitado.\n"
+                        "Dica: opcionalmente configure GROQ_API_KEY no arquivo .env "
+                        "(e instale 'pip install -r requirements.txt') para ativar contingência automática.\n"
+                    )
+                monitor.erro(
+                    agente="arquiteto",
+                    etapa="arquitetura_prompts",
+                    detalhe=str(exc_arq),
+                )
+                return 1
+
+            provedor_arq = str(res_arq.get("provedor", f"Gemini ({modelo})"))
+            if "groq" in provedor_arq.lower():
+                monitor.evento(
+                    "CONTINGENCIA",
+                    agente="ARQUITETO DE PROMPTS",
+                    provedor=provedor_arq,
+                    motivo=(
+                        equipe.ultimo_motivo_contingencia
+                        or "Gemini instavel (503/429/overloaded)"
+                    ),
+                )
+
+            total_chamadas += 1
+            _acumular_tokens(tokens_totais, res_arq["tokens"])
+
+            dados_arq = res_arq["dados"]
+            demanda = str(dados_arq.get("pedido_estruturado_txt", "")).strip()
+            (DIR_PROMPTS / "pedido_customizado.txt").write_text(
+                demanda + "\n", encoding="utf-8"
+            )
+            (DIR_DOCS / "pedido_customizado.txt").write_text(
+                demanda + "\n", encoding="utf-8"
+            )
+
+            areas = dados_arq.get("areas_tematicas") or []
+            monitor.agente_entrega(
+                agente="arquiteto",
+                rodada=0,
+                resumo=(
+                    f"Tema definido: {dados_arq.get('tema_definido', '-')} | "
+                    f"Público-alvo: {dados_arq.get('publico_alvo', '-')}"
+                ),
+                parecer=(
+                    f"Provedor: {provedor_arq} | Especificação adaptada salva em "
+                    f"prompts/pedido_customizado.txt e output/docs/pedido_customizado.txt "
+                    f"({len(areas)} áreas temáticas)."
+                ),
+                duracao=res_arq["duracao"],
+                tokens=res_arq["tokens"],
+            )
+        else:
+            demanda = pedido_referencia
 
         # Etapa 1: Planejamento pelo Coordenador
         monitor.agente_inicio(
