@@ -12,7 +12,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from agentes import EquipeAgentes, ErroExecucaoAgente
-from logger import Monitor
+from logger import Monitor, NOMES
 
 BASE_DIR = Path(__file__).resolve().parent
 DIR_PROMPTS = BASE_DIR / "prompts"
@@ -236,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
             espera_segundos=f"{espera_s}s",
         )
 
+    equipe: EquipeAgentes | None = None
+    agente_atual = "Orquestrador"
+    etapa_atual = "Inicializacao"
+
     try:
         equipe = EquipeAgentes(
             api_key=api_key,
@@ -244,8 +248,27 @@ def main(argv: list[str] | None = None) -> int:
             on_retry=_registrar_retry,
         )
 
+        def _registrar_contingencia(
+            agente_chave: str, retorno: dict[str, Any], rodada: int
+        ) -> str:
+            provedor = str(retorno.get("provedor", f"Gemini ({modelo})"))
+            if "groq" in provedor.lower():
+                monitor.evento(
+                    "CONTINGENCIA_ACIONADA",
+                    agente=NOMES.get(agente_chave.lower(), agente_chave),
+                    rodada=rodada,
+                    provedor=provedor,
+                    motivo=(
+                        equipe.ultimo_motivo_contingencia
+                        or "Gemini indisponivel/instavel apos retries"
+                    ),
+                )
+            return provedor
+
         # Etapa 0 (opcional via CLI): Agente Arquiteto de Prompts
         if ideia_usuario:
+            agente_atual = "arquiteto"
+            etapa_atual = "arquitetura_prompts"
             monitor.agente_inicio(
                 agente="arquiteto",
                 origem="Usuario (CLI)",
@@ -256,45 +279,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"para a ideia: {ideia_usuario}"
                 ),
             )
-            try:
-                res_arq = equipe.executar_arquiteto_prompts(ideia_usuario, pedido_referencia)
-            except ErroExecucaoAgente as exc_arq:
-                if equipe.groq_client is None:
-                    motivo_sem_groq = (
-                        "Fallback via Groq nao configurado (GROQ_API_KEY ausente no .env "
-                        "ou biblioteca groq nao instalada)."
-                    )
-                    monitor.evento(
-                        "CONTINGENCIA_NAO_CONFIGURADA",
-                        agente="ARQUITETO DE PROMPTS",
-                        detalhe=motivo_sem_groq,
-                        erro_primario=str(exc_arq),
-                    )
-                    print(
-                        "\n[DIAGNÓSTICO DE CONTINGÊNCIA] O provedor primário (Gemini) falhou:\n"
-                        f"  {exc_arq}\n"
-                        "O fallback automático via Groq não estava habilitado.\n"
-                        "Dica: opcionalmente configure GROQ_API_KEY no arquivo .env "
-                        "(e instale 'pip install -r requirements.txt') para ativar contingência automática.\n"
-                    )
-                monitor.erro(
-                    agente="arquiteto",
-                    etapa="arquitetura_prompts",
-                    detalhe=str(exc_arq),
-                )
-                return 1
-
-            provedor_arq = str(res_arq.get("provedor", f"Gemini ({modelo})"))
-            if "groq" in provedor_arq.lower():
-                monitor.evento(
-                    "CONTINGENCIA",
-                    agente="ARQUITETO DE PROMPTS",
-                    provedor=provedor_arq,
-                    motivo=(
-                        equipe.ultimo_motivo_contingencia
-                        or "Gemini instavel (503/429/overloaded)"
-                    ),
-                )
+            res_arq = equipe.executar_arquiteto_prompts(ideia_usuario, pedido_referencia)
+            provedor_arq = _registrar_contingencia("arquiteto", res_arq, rodada=0)
 
             total_chamadas += 1
             _acumular_tokens(tokens_totais, res_arq["tokens"])
@@ -328,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
             demanda = pedido_referencia
 
         # Etapa 1: Planejamento pelo Coordenador
+        agente_atual = "Coordenador"
+        etapa_atual = "Planejamento Inicial"
         monitor.agente_inicio(
             agente="Coordenador",
             origem="Orquestrador (main.py)",
@@ -336,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             tarefa="Analisar demanda principal e definir plano técnico e critérios de aceite.",
         )
         res_coord = equipe.executar_coordenador_planejamento(demanda)
+        provedor_coord = _registrar_contingencia("coordenador", res_coord, rodada=0)
         total_chamadas += 1
         _acumular_tokens(tokens_totais, res_coord["tokens"])
 
@@ -349,7 +338,8 @@ def main(argv: list[str] | None = None) -> int:
             rodada=0,
             resumo=dados_plano.get("resumo_planejamento", ""),
             parecer=(
-                f"Plano gerado com {len(dados_plano.get('requisitos_criticos', []))} "
+                f"Provedor: {provedor_coord} | Plano gerado com "
+                f"{len(dados_plano.get('requisitos_criticos', []))} "
                 "requisitos críticos definidos."
             ),
             duracao=res_coord["duracao"],
@@ -379,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
                 origem_fs = "Coordenador (Plano de Tarefas)"
                 etapa_fs = "Implementação Inicial Fullstack"
 
+            agente_atual = "Fullstack"
+            etapa_atual = etapa_fs
             monitor.agente_inicio(
                 agente="Fullstack",
                 origem=origem_fs,
@@ -392,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
                 codigo_anterior=codigo_atual,
                 apontamentos_qa=apontamentos_qa,
             )
+            provedor_fs = _registrar_contingencia("fullstack", res_fs, rodada=rodada)
             total_chamadas += 1
             _acumular_tokens(tokens_totais, res_fs["tokens"])
 
@@ -413,8 +406,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             parecer_fs = (
-                f"Arquivos gravados em output/site/ com {len(correcoes)} registro(s) "
-                "de correção/implementação."
+                f"Provedor: {provedor_fs} | Arquivos gravados em output/site/ com "
+                f"{len(correcoes)} registro(s) de correção/implementação."
             )
             monitor.agente_entrega(
                 agente="Fullstack",
@@ -428,6 +421,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             # Auditoria Estática pelo QA/Cibersegurança
+            agente_atual = "QA_Ciberseguranca"
+            etapa_atual = "Auditoria Estática de Qualidade e Segurança"
             monitor.agente_inicio(
                 agente="QA_Ciberseguranca",
                 origem="Fullstack (output/site/)",
@@ -443,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
                 plano=dados_plano,
                 arquivos_codigo=codigo_atual,
             )
+            provedor_qa = _registrar_contingencia("qa_ciberseguranca", res_qa, rodada=rodada)
             total_chamadas += 1
             _acumular_tokens(tokens_totais, res_qa["tokens"])
 
@@ -464,9 +460,9 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             parecer_curto_qa = (
-                "APROVADO sem achados pendentes."
+                f"Provedor: {provedor_qa} | APROVADO sem achados pendentes."
                 if aprovado and not achados
-                else f"REPROVADO com {len(achados)} achado(s) na análise estática."
+                else f"Provedor: {provedor_qa} | REPROVADO com {len(achados)} achado(s) na análise estática."
             )
             monitor.agente_entrega(
                 agente="QA_Ciberseguranca",
@@ -524,7 +520,30 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     except ErroExecucaoAgente as exc:
-        monitor.erro(agente="EquipeAgentes", etapa="Chamada Gemini", detalhe=str(exc))
+        if (
+            equipe is not None
+            and equipe.groq_client is None
+            and EquipeAgentes._eh_mensagem_transitoria(str(exc))
+        ):
+            motivo_sem_groq = (
+                "Fallback via Groq nao configurado (GROQ_API_KEY ausente no .env "
+                "ou biblioteca groq nao instalada)."
+            )
+            monitor.evento(
+                "CONTINGENCIA_NAO_CONFIGURADA",
+                agente=NOMES.get(agente_atual.lower(), agente_atual),
+                etapa=etapa_atual,
+                detalhe=motivo_sem_groq,
+                erro_primario=str(exc),
+            )
+            print(
+                "\n[DIAGNÓSTICO DE CONTINGÊNCIA] O provedor primário (Gemini) falhou:\n"
+                f"  {exc}\n"
+                "O fallback automático via Groq não estava habilitado.\n"
+                "Dica: opcionalmente configure GROQ_API_KEY no arquivo .env "
+                "(e instale 'pip install -r requirements.txt') para ativar contingência automática.\n"
+            )
+        monitor.erro(agente=agente_atual, etapa=etapa_atual, detalhe=str(exc))
         return 1
     except KeyboardInterrupt:
         monitor.erro(

@@ -171,7 +171,7 @@ class EquipeAgentes:
 
         self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
         self.groq_model = (
-            os.getenv("GROQ_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b"
+            os.getenv("GROQ_MODEL", "openai/gpt-oss-20b") or "openai/gpt-oss-20b"
         ).strip()
         self.groq_client: Any = None
         self.ultimo_motivo_contingencia: str = ""
@@ -316,112 +316,63 @@ class EquipeAgentes:
             for termo in ("timeout", "timed out", "unavailable", "overloaded", "connection")
         )
 
-    def _chamar_gemini(
+    @staticmethod
+    def _eh_mensagem_transitoria(mensagem: str) -> bool:
+        """Verifica se uma mensagem de erro indica indisponibilidade transitória."""
+        texto = (mensagem or "").lower()
+        termos_transitorios = (
+            "503",
+            "429",
+            "unavailable",
+            "resource_exhausted",
+            "overloaded",
+            "sobrecarregado",
+            "indisponível",
+            "indisponivel",
+            "cota",
+            "timeout",
+            "timed out",
+            "temporarily unavailable",
+            "rate limit",
+            "conexão",
+            "conexao",
+        )
+        return any(termo in texto for termo in termos_transitorios)
+
+    @staticmethod
+    def _descrever_schema_para_prompt(schema: dict[str, Any]) -> str:
+        """Gera descrição objetiva das chaves JSON exigidas para reforço no fallback."""
+        props = schema.get("properties", {})
+        obrigatorias = schema.get("required", [])
+        partes: list[str] = []
+        for chave in obrigatorias:
+            info = props.get(chave, {})
+            tipo = info.get("type", "string")
+            if chave == "arquivos" and tipo == "object":
+                sub_req = info.get("required", ["index_html", "style_css", "script_js"])
+                partes.append(f'"{chave}" (object com chaves {", ".join(sub_req)})')
+            else:
+                partes.append(f'"{chave}" ({tipo})')
+        return ", ".join(partes)
+
+    def _chamar_groq(
         self,
-        nome_agente: str,
-        instrucao_sistema: str,
-        conteudo_usuario: str,
         schema: dict[str, Any],
-        temperatura: float = 0.2,
+        prompt_sistema: str,
+        prompt_usuario: str,
+        identificador_agente: str = "Agente",
     ) -> dict[str, Any]:
-        """Executa a chamada estruturada ao Gemini e retorna dados, tokens e duração."""
-        config = types.GenerateContentConfig(
-            system_instruction=instrucao_sistema,
-            response_mime_type="application/json",
-            response_json_schema=schema,
-            temperature=temperatura,
-        )
-
-        max_tentativas = 3
-        response = None
-        inicio_total = time.perf_counter()
-
-        for tentativa in range(1, max_tentativas + 1):
-            try:
-                response = self.client.models.generate_content(
-                    model=self.modelo,
-                    contents=conteudo_usuario,
-                    config=config,
-                )
-                break
-            except errors.APIError as exc:
-                codigo = getattr(exc, "code", None)
-                if self._eh_erro_transitorio_api(exc) and tentativa < max_tentativas:
-                    espera = 5 * (2 ** (tentativa - 1))
-                    motivo = f"HTTP {codigo}" if codigo is not None else f"API transitória: {exc}"
-                    if self.on_retry is not None:
-                        self.on_retry(
-                            nome_agente,
-                            tentativa,
-                            max_tentativas,
-                            motivo,
-                            espera,
-                        )
-                    time.sleep(espera)
-                    continue
-                raise ErroExecucaoAgente(self._traduzir_erro_api(nome_agente, exc)) from exc
-            except Exception as exc:
-                if self._eh_erro_transitorio_geral(exc) and tentativa < max_tentativas:
-                    espera = 5 * (2 ** (tentativa - 1))
-                    if self.on_retry is not None:
-                        self.on_retry(
-                            nome_agente,
-                            tentativa,
-                            max_tentativas,
-                            f"Rede/Timeout: {exc}",
-                            espera,
-                        )
-                    time.sleep(espera)
-                    continue
-                if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
-                    raise ErroExecucaoAgente(
-                        f"Erro de conexão/rede ao chamar o agente {nome_agente}: {exc}"
-                    ) from exc
-                raise ErroExecucaoAgente(
-                    f"Falha inesperada ao comunicar com o agente {nome_agente}: {exc}"
-                ) from exc
-
-        duracao = time.perf_counter() - inicio_total
-
-        texto_bruto = (getattr(response, "text", None) or "").strip()
-        if not texto_bruto:
-            raise ErroExecucaoAgente(
-                f"O agente {nome_agente} retornou resposta vazia sem conteúdo JSON."
-            )
-
-        try:
-            dados = json.loads(texto_bruto)
-        except json.JSONDecodeError as exc:
-            raise ErroExecucaoAgente(
-                f"Falha ao fazer parse JSON da resposta do agente {nome_agente}: {exc}"
-            ) from exc
-
-        dados_validados = self._validar_campos_schema(
-            nome_agente, dados, schema.get("required", [])
-        )
-        tokens = self._extrair_tokens(response)
-
-        return {
-            "dados": dados_validados,
-            "tokens": tokens,
-            "duracao": duracao,
-        }
-
-    def _chamar_groq_arquiteto(
-        self, prompt_sistema: str, prompt_usuario: str
-    ) -> dict[str, Any]:
-        """Executa chamada de contingência via Groq com saída JSON estruturada."""
+        """Executa chamada centralizada de contingência via Groq com saída JSON validada."""
         if not self.groq_client:
             raise ErroExecucaoAgente(
-                "Cliente Groq não inicializado ou chave GROQ_API_KEY ausente."
+                f"Cliente Groq não inicializado ou chave GROQ_API_KEY ausente ({identificador_agente})."
             )
 
+        chaves_descritas = self._descrever_schema_para_prompt(schema)
         sistema_reforcado = (
             f"{prompt_sistema}\n\n"
-            "IMPORTANTE: Sua resposta DEVE ser estritamente um objeto JSON válido com as chaves: "
-            '"tema_definido" (string), "publico_alvo" (string), "areas_tematicas" (array de strings) '
-            'e "pedido_estruturado_txt" (string contendo a demanda completa clonada com todas as '
-            "regras de acessibilidade, banner acadêmico e segurança)."
+            "IMPORTANTE: Responda EXCLUSIVAMENTE com um objeto JSON válido (sem cercas Markdown) "
+            f"contendo obrigatoriamente as chaves: {chaves_descritas}."
         )
 
         inicio = time.perf_counter()
@@ -437,47 +388,51 @@ class EquipeAgentes:
             )
         except Exception as exc:
             raise ErroExecucaoAgente(
-                f"Falha na chamada de contingência via Groq ({self.groq_model}): {exc}"
+                f"Falha na chamada de contingência via Groq ({self.groq_model}) para {identificador_agente}: {exc}"
             ) from exc
         duracao = float(time.perf_counter() - inicio)
 
-        conteudo = "{}"
+        conteudo = ""
         choices = getattr(chat_completion, "choices", None)
         if choices and len(choices) > 0:
-            conteudo = getattr(choices[0].message, "content", None) or "{}"
+            conteudo = getattr(choices[0].message, "content", None) or ""
+
+        conteudo_limpo = conteudo.strip()
+        if conteudo_limpo.startswith("```"):
+            linhas = conteudo_limpo.splitlines()
+            if linhas and linhas[0].startswith("```"):
+                linhas = linhas[1:]
+            if linhas and linhas[-1].startswith("```"):
+                linhas = linhas[:-1]
+            conteudo_limpo = "\n".join(linhas).strip()
+
+        if not conteudo_limpo:
+            raise ErroExecucaoAgente(
+                f"A resposta de contingência da Groq para {identificador_agente} veio vazia."
+            )
 
         try:
-            dados = json.loads(conteudo)
+            dados = json.loads(conteudo_limpo)
         except json.JSONDecodeError as exc:
             raise ErroExecucaoAgente(
-                f"Falha ao fazer parse JSON da resposta de contingência da Groq: {exc}"
+                f"Falha ao fazer parse JSON da resposta da Groq ({identificador_agente}): {exc}"
             ) from exc
 
-        if not isinstance(dados, dict):
-            raise ErroExecucaoAgente(
-                "Resposta de contingência da Groq não retornou um objeto JSON válido."
-            )
+        dados_validados = self._validar_campos_schema(
+            identificador_agente, dados, schema.get("required", [])
+        )
 
-        chaves_obrigatorias = [
-            "tema_definido",
-            "publico_alvo",
-            "areas_tematicas",
-            "pedido_estruturado_txt",
-        ]
-        for chave in chaves_obrigatorias:
-            if chave not in dados or not dados[chave]:
+        if "arquivos" in schema.get("properties", {}):
+            arquivos = dados_validados.get("arquivos")
+            if not isinstance(arquivos, dict):
                 raise ErroExecucaoAgente(
-                    f"Campo obrigatório '{chave}' ausente ou vazio na resposta da Groq."
+                    f"Campo 'arquivos' retornado pela Groq ({identificador_agente}) não é um objeto."
                 )
-
-        if not isinstance(dados["areas_tematicas"], list):
-            raise ErroExecucaoAgente(
-                "Campo 'areas_tematicas' retornado pela Groq deve ser uma lista não vazia."
-            )
-        if not str(dados["pedido_estruturado_txt"]).strip():
-            raise ErroExecucaoAgente(
-                "Campo 'pedido_estruturado_txt' retornado pela Groq está vazio."
-            )
+            for chave_arq in ("index_html", "style_css", "script_js"):
+                if chave_arq not in arquivos or not str(arquivos[chave_arq]).strip():
+                    raise ErroExecucaoAgente(
+                        f"Arquivo '{chave_arq}' ausente ou vazio na resposta da Groq ({identificador_agente})."
+                    )
 
         usage = getattr(chat_completion, "usage", None)
         prompt_t = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
@@ -490,25 +445,130 @@ class EquipeAgentes:
         tokens = {"prompt": prompt_t, "saida": saida_t, "total": total_t}
 
         return {
-            "dados": dados,
+            "dados": dados_validados,
             "tokens": tokens,
             "duracao": duracao,
             "provedor": f"Groq ({self.groq_model})",
         }
 
+    def _chamar_gemini(
+        self,
+        nome_agente: str,
+        instrucao_sistema: str,
+        conteudo_usuario: str,
+        schema: dict[str, Any],
+        temperatura: float = 0.2,
+        identificador_agente: str = "Agente",
+    ) -> dict[str, Any]:
+        """Executa a chamada ao Gemini com retries e fallback atômico universal para Groq."""
+        agente_label = identificador_agente if identificador_agente != "Agente" else nome_agente
+        self.ultimo_motivo_contingencia = ""
+
+        config = types.GenerateContentConfig(
+            system_instruction=instrucao_sistema,
+            response_mime_type="application/json",
+            response_json_schema=schema,
+            temperature=temperatura,
+        )
+
+        try:
+            max_tentativas = 3
+            response = None
+            inicio_total = time.perf_counter()
+
+            for tentativa in range(1, max_tentativas + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=conteudo_usuario,
+                        config=config,
+                    )
+                    break
+                except errors.APIError as exc:
+                    codigo = getattr(exc, "code", None)
+                    if self._eh_erro_transitorio_api(exc) and tentativa < max_tentativas:
+                        espera = 5 * (2 ** (tentativa - 1))
+                        motivo = f"HTTP {codigo}" if codigo is not None else f"API transitória: {exc}"
+                        if self.on_retry is not None:
+                            self.on_retry(
+                                nome_agente,
+                                tentativa,
+                                max_tentativas,
+                                motivo,
+                                espera,
+                            )
+                        time.sleep(espera)
+                        continue
+                    raise ErroExecucaoAgente(self._traduzir_erro_api(nome_agente, exc)) from exc
+                except Exception as exc:
+                    if self._eh_erro_transitorio_geral(exc) and tentativa < max_tentativas:
+                        espera = 5 * (2 ** (tentativa - 1))
+                        if self.on_retry is not None:
+                            self.on_retry(
+                                nome_agente,
+                                tentativa,
+                                max_tentativas,
+                                f"Rede/Timeout: {exc}",
+                                espera,
+                            )
+                        time.sleep(espera)
+                        continue
+                    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+                        raise ErroExecucaoAgente(
+                            f"Erro de conexão/rede ao chamar o agente {nome_agente}: {exc}"
+                        ) from exc
+                    raise ErroExecucaoAgente(
+                        f"Falha inesperada ao comunicar com o agente {nome_agente}: {exc}"
+                    ) from exc
+
+            duracao = float(time.perf_counter() - inicio_total)
+
+            texto_bruto = (getattr(response, "text", None) or "").strip()
+            if not texto_bruto:
+                raise ErroExecucaoAgente(
+                    f"O agente {nome_agente} retornou resposta vazia sem conteúdo JSON."
+                )
+
+            try:
+                dados = json.loads(texto_bruto)
+            except json.JSONDecodeError as exc:
+                raise ErroExecucaoAgente(
+                    f"Falha ao fazer parse JSON da resposta do agente {nome_agente}: {exc}"
+                ) from exc
+
+            dados_validados = self._validar_campos_schema(
+                nome_agente, dados, schema.get("required", [])
+            )
+            tokens = self._extrair_tokens(response)
+
+            return {
+                "dados": dados_validados,
+                "tokens": tokens,
+                "duracao": duracao,
+                "provedor": f"Gemini ({self.modelo})",
+            }
+        except Exception as erro_gemini:
+            if (
+                self._eh_mensagem_transitoria(str(erro_gemini))
+                and self.groq_client is not None
+            ):
+                self.ultimo_motivo_contingencia = str(erro_gemini)
+                print(
+                    f"\n[AVISO] Gemini indisponível para {agente_label} após tentativas "
+                    f"({erro_gemini}). Acionando contingência via Groq ({self.groq_model})..."
+                )
+                return self._chamar_groq(
+                    schema=schema,
+                    prompt_sistema=instrucao_sistema,
+                    prompt_usuario=conteudo_usuario,
+                    identificador_agente=agente_label,
+                )
+            raise
+
     def executar_arquiteto_prompts(
         self, ideia_usuario: str, pedido_referencia: str
     ) -> dict[str, Any]:
-        """Executa o Agente Arquiteto com fallback automático para Groq caso o Gemini falhe.
-
-        Retorna um dicionário padronizado: {
-            'dados': dict,     # Dados validados pelo SCHEMA_ARQUITETO_PROMPTS
-            'tokens': dict,    # Dicionário {'prompt': int, 'saida': int, 'total': int}
-            'duracao': float,  # Duração da chamada em segundos
-            'provedor': str,   # Identificação do provedor que atendeu a requisição
-        }
-        """
-        self.ultimo_motivo_contingencia = ""
+        """Executa o Agente Arquiteto com fallback automático para Groq caso o Gemini falhe."""
         ideia_limpa = str(ideia_usuario or "").strip()
         if not ideia_limpa:
             raise ErroExecucaoAgente(
@@ -523,60 +583,26 @@ class EquipeAgentes:
             f"=== PEDIDO DE REFERÊNCIA (MODELO ESTRUTURAL) ===\n{pedido_referencia}"
         )
 
-        try:
-            resultado = self._chamar_gemini(
-                nome_agente="ARQUITETO DE PROMPTS",
-                instrucao_sistema=self.sys_arquiteto,
-                conteudo_usuario=prompt_usuario,
-                schema=SCHEMA_ARQUITETO_PROMPTS,
-                temperatura=0.3,
+        resultado = self._chamar_gemini(
+            nome_agente="ARQUITETO DE PROMPTS",
+            instrucao_sistema=self.sys_arquiteto,
+            conteudo_usuario=prompt_usuario,
+            schema=SCHEMA_ARQUITETO_PROMPTS,
+            temperatura=0.3,
+            identificador_agente="ARQUITETO DE PROMPTS",
+        )
+
+        dados = resultado["dados"]
+        if not str(dados.get("pedido_estruturado_txt", "")).strip():
+            raise ErroExecucaoAgente(
+                "O Agente Arquiteto retornou 'pedido_estruturado_txt' vazio."
+            )
+        if not isinstance(dados.get("areas_tematicas"), list) or not dados["areas_tematicas"]:
+            raise ErroExecucaoAgente(
+                "O Agente Arquiteto deve retornar uma lista não vazia em 'areas_tematicas'."
             )
 
-            dados = resultado["dados"]
-            if not str(dados.get("pedido_estruturado_txt", "")).strip():
-                raise ErroExecucaoAgente(
-                    "O Agente Arquiteto retornou 'pedido_estruturado_txt' vazio."
-                )
-            if not isinstance(dados.get("areas_tematicas"), list) or not dados["areas_tematicas"]:
-                raise ErroExecucaoAgente(
-                    "O Agente Arquiteto deve retornar uma lista não vazia em 'areas_tematicas'."
-                )
-
-            resultado["provedor"] = f"Gemini ({self.modelo})"
-            return resultado
-        except Exception as erro_gemini:
-            msg_erro = str(erro_gemini).lower()
-            erros_transitorios = (
-                "503",
-                "429",
-                "unavailable",
-                "resource_exhausted",
-                "overloaded",
-                "sobrecarregado",
-                "indisponível",
-                "indisponivel",
-                "cota",
-                "timeout",
-                "timed out",
-                "temporarily unavailable",
-                "rate limit",
-                "conexão",
-                "conexao",
-            )
-            eh_transitorio = any(termo in msg_erro for termo in erros_transitorios)
-
-            if eh_transitorio and self.groq_client is not None:
-                self.ultimo_motivo_contingencia = str(erro_gemini)
-                print(
-                    f"\n[AVISO] Gemini indisponível após tentativas ({erro_gemini}). "
-                    f"Acionando contingência via Groq ({self.groq_model})..."
-                )
-                return self._chamar_groq_arquiteto(
-                    prompt_sistema=self.sys_arquiteto,
-                    prompt_usuario=prompt_usuario,
-                )
-
-            raise
+        return resultado
 
     def executar_coordenador_planejamento(self, demanda: str) -> dict[str, Any]:
         """Aciona o Coordenador para produzir o plano de trabalho e critérios de aceite."""
@@ -591,6 +617,7 @@ class EquipeAgentes:
             conteudo_usuario=prompt_usuario,
             schema=SCHEMA_COORDENADOR,
             temperatura=0.2,
+            identificador_agente="Coordenador",
         )
 
     def executar_fullstack(
@@ -630,6 +657,7 @@ class EquipeAgentes:
             conteudo_usuario=prompt_usuario,
             schema=SCHEMA_FULLSTACK,
             temperatura=0.2,
+            identificador_agente="Fullstack",
         )
 
         arquivos = resultado["dados"].get("arquivos")
@@ -669,6 +697,7 @@ class EquipeAgentes:
             conteudo_usuario=prompt_usuario,
             schema=SCHEMA_QA_SEC,
             temperatura=0.1,
+            identificador_agente="QA/Ciberseguranca",
         )
 
         dados = resultado["dados"]

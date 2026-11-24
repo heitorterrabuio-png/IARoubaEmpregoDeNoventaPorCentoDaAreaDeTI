@@ -444,7 +444,9 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
         "contingencia_groq_ativa": False,
         "contingencia_provedor": "",
         "contingencia_motivo": "",
+        "contingencias": [],
     }
+    chaves_contingencia: set[tuple[str, str]] = set()
 
     for ev in eventos:
         tipo = ev["tipo"]
@@ -453,14 +455,26 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
             info["modelo"] = campos.get("modelo_gemini", info["modelo"])
             info["modo_demanda"] = campos.get("modo_demanda", info["modo_demanda"])
             info["max_rodadas"] = campos.get("max_rodadas", info["max_rodadas"])
-        elif tipo == "CONTINGENCIA":
+        elif tipo in ("CONTINGENCIA_ACIONADA", "CONTINGENCIA"):
             prov = campos.get("provedor", "")
             if "groq" in prov.lower():
-                info["contingencia_groq_ativa"] = True
-                info["contingencia_provedor"] = prov or "Groq"
-                info["contingencia_motivo"] = campos.get(
-                    "motivo", "Gemini instável (503/429/overloaded)"
+                agente_cont = campos.get("agente", "Agente")
+                rodada_cont = campos.get("rodada", "-")
+                motivo_cont = campos.get(
+                    "motivo", "Gemini indisponivel/instavel apos retries"
                 )
+                info["contingencia_provedor"] = info["contingencia_provedor"] or prov
+                info["contingencia_motivo"] = info["contingencia_motivo"] or motivo_cont
+                info["contingencias"].append(
+                    {
+                        "timestamp": ev["timestamp"],
+                        "agente": agente_cont,
+                        "rodada": rodada_cont,
+                        "provedor": prov,
+                        "motivo": motivo_cont,
+                    }
+                )
+                chaves_contingencia.add((agente_cont.lower(), str(rodada_cont)))
         elif tipo == "AGENTE_INICIO":
             agente_ev = campos.get("agente", "")
             if "arquiteto de prompts" in agente_ev.lower():
@@ -468,29 +482,48 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
                 info["arquiteto_tarefa"] = campos.get("tarefa", info["arquiteto_tarefa"])
         elif tipo == "AGENTE_ENTREGA":
             agente_ev = campos.get("agente", "-")
+            rodada_ev = campos.get("rodada", "-")
+            parecer_ev = campos.get("parecer", "-")
+            match_prov = re.search(r"Provedor:\s*([^|\n]+)", parecer_ev, re.IGNORECASE)
+            prov_ev = (
+                match_prov.group(1).strip()
+                if match_prov
+                else f"Gemini ({info['modelo']})"
+            )
+
             if "arquiteto de prompts" in agente_ev.lower():
                 info["arquiteto_ativo"] = True
                 resumo_arq = campos.get("resumo", "")
-                parecer_arq = campos.get("parecer", "")
                 info["arquiteto_resumo"] = resumo_arq
                 match_tema = re.search(r"Tema definido:\s*([^|\n]+)", resumo_arq, re.IGNORECASE)
                 if match_tema:
                     info["arquiteto_tema"] = match_tema.group(1).strip()
-                match_prov = re.search(r"Provedor:\s*([^|\n]+)", parecer_arq, re.IGNORECASE)
-                if match_prov:
-                    prov_arq = match_prov.group(1).strip()
-                    info["arquiteto_provedor"] = prov_arq
-                    if "groq" in prov_arq.lower():
-                        info["contingencia_groq_ativa"] = True
-                        info["contingencia_provedor"] = info["contingencia_provedor"] or prov_arq
+                info["arquiteto_provedor"] = prov_ev
+
+            if "groq" in prov_ev.lower():
+                info["contingencia_provedor"] = info["contingencia_provedor"] or prov_ev
+                chave_ent = (agente_ev.lower(), str(rodada_ev))
+                if chave_ent not in chaves_contingencia:
+                    chaves_contingencia.add(chave_ent)
+                    info["contingencias"].append(
+                        {
+                            "timestamp": ev["timestamp"],
+                            "agente": agente_ev,
+                            "rodada": rodada_ev,
+                            "provedor": prov_ev,
+                            "motivo": "Fallback registrado na entrega do agente",
+                        }
+                    )
+
             info["entregas"].append(
                 {
                     "timestamp": ev["timestamp"],
                     "agente": agente_ev,
-                    "rodada": campos.get("rodada", "-"),
+                    "rodada": rodada_ev,
                     "duracao": campos.get("duracao_segundos", "-"),
                     "tokens": campos.get("tokens_reais", "-"),
-                    "parecer": campos.get("parecer", "-"),
+                    "parecer": parecer_ev,
+                    "provedor": prov_ev,
                 }
             )
         elif tipo == "ENCERRAMENTO":
@@ -506,6 +539,7 @@ def _parsear_log_execucao(conteudo_log: str) -> dict[str, Any]:
                 campos.get("tokens_totais_reais", "")
             )
 
+    info["contingencia_groq_ativa"] = len(info["contingencias"]) > 0
     return info
 
 
@@ -639,23 +673,27 @@ def gerar_pdf() -> int:
     )
 
     tokens_totais = dados_log["tokens_totais"]
+    contingencias = dados_log["contingencias"]
     contingencia_groq = bool(dados_log["contingencia_groq_ativa"])
-    provedor_arquiteto = (
-        dados_log["contingencia_provedor"]
-        if contingencia_groq
-        else (dados_log["arquiteto_provedor"] or f"Gemini ({dados_log['modelo']})")
+    etapas_contingencia_str = ", ".join(
+        f"{c['agente']} (R{c['rodada']})" for c in contingencias
     )
-    linha_provedor_arq = ""
-    if arquiteto_ativo:
-        sufixo = " (Contingência Groq)" if contingencia_groq else ""
-        linha_provedor_arq = f"Provedor do Arquiteto: {provedor_arquiteto}{sufixo}\n"
+    if contingencia_groq:
+        linha_contingencia_resumo = (
+            f"Contingência Groq: Acionada em {len(contingencias)} etapa(s) "
+            f"[{etapas_contingencia_str}]\n"
+        )
+    else:
+        linha_contingencia_resumo = (
+            f"Provedor de Inferência: Gemini ({dados_log['modelo']}) em 100% das etapas\n"
+        )
 
     pdf.caixa_destaque(
         "Resumo Executivo da Execução Real (Extraído de output/execucao_real.log)",
         (
             f"Modelo Configurado: {dados_log['modelo']}\n"
             f"Modo de Demanda: {modo_descricao}\n"
-            f"{linha_provedor_arq}"
+            f"{linha_contingencia_resumo}"
             f"Status Final da Orquestração: {dados_log['status_final']}\n"
             f"Rodadas Executadas / Limite: {dados_log['rodadas_executadas']} / {dados_log['max_rodadas']}\n"
             f"Chamadas Estruturadas à API: {dados_log['chamadas_api']}\n"
@@ -783,17 +821,6 @@ def gerar_pdf() -> int:
             "técnicos, enquanto os prompts de sistema do Coordenador, Fullstack e QA "
             "operam de forma desacoplada do tema."
         )
-        if contingencia_groq:
-            pdf.paragrafo(
-                "Observou-se ainda resiliência operacional de nível de produção: diante "
-                "de falha transitória na API primária Gemini, o sistema ativou o fallback "
-                f"automatizado via {provedor_arquiteto} para concluir o metaprompting do "
-                "Arquiteto de Prompts sem interromper a esteira multiagente."
-            )
-        else:
-            pdf.paragrafo(
-                f"Provedor que atendeu o Agente Arquiteto nesta execução: {provedor_arquiteto}."
-            )
         catalogo_prompts = [
             ("sys_arquiteto.txt", "Metaprompting e clonagem estrutural da baseline"),
             ("pedido_principal.txt", "Modelo estrutural de referência (baseline preservada)"),
@@ -816,6 +843,20 @@ def gerar_pdf() -> int:
             ("sys_fullstack.txt", "Codificação HTML5/CSS3/JS puro e refatoração (desacoplado)"),
             ("sys_qa_sec.txt", "Checklist estático de QA, WCAG e segurança (desacoplado)"),
         ]
+
+    if contingencia_groq:
+        pdf.paragrafo(
+            "Estratégia de Contingência de Schemas no Log: diante de falhas transitórias "
+            "no provedor primário Gemini após retries, o fallback automático via Groq "
+            "(response_format={'type': 'json_object'} com reforço dinâmico das chaves do "
+            f"schema) foi acionado nas etapas: {etapas_contingencia_str}."
+        )
+    else:
+        pdf.paragrafo(
+            "Todas as chamadas de prompts desta execução ocorreram diretamente no provedor "
+            f"primário Gemini ({dados_log['modelo']}) utilizando response_json_schema nativo, "
+            "sem necessidade de acionamento do fallback."
+        )
     linhas_prompts: list[list[str]] = []
     for nome_p, papel_p in catalogo_prompts:
         caminho_p = DIR_PROMPTS / nome_p
@@ -879,17 +920,19 @@ def gerar_pdf() -> int:
         f"de saída) em {dados_log['duracao_total']}."
     )
     if contingencia_groq:
-        motivo_cont = dados_log["contingencia_motivo"] or "Gemini instável (503/429/overloaded)"
+        linhas_cont = [
+            f"* {c['agente']} (Rodada {c['rodada']}): atendido por {c['provedor']} | Motivo: {c['motivo']}"
+            for c in contingencias
+        ]
         pdf.caixa_destaque(
             "Resiliência Operacional - Contingência via Groq",
-            (
-                f"Provedor de Contingência Acionado: {provedor_arquiteto}\n"
-                f"Motivo Registrado no Log: {motivo_cont}\n"
-                "Avaliação: O sistema demonstrou resiliência operacional de nível de "
-                "produção, ativando o fallback automatizado via Groq para contornar "
-                "instabilidades transitórias de serviço da API primária sem perda da "
-                "entrega ou quebra dos guardrails da P2."
-            ),
+            "\n".join(linhas_cont)
+            + "\nAvaliação: O fallback atômico por chamada permitiu contornar falhas transitórias do Gemini sem interromper a esteira nem impedir que etapas seguintes retomassem o provedor primário.",
+        )
+    else:
+        pdf.paragrafo(
+            f"Provedores observados no log: todas as chamadas foram atendidas diretamente "
+            f"pelo provedor primário Gemini ({dados_log['modelo']}), sem acionamento de contingência."
         )
     if dados_log["entregas"]:
         linhas_entregas = [
@@ -936,6 +979,19 @@ def gerar_pdf() -> int:
             "memória/DOM no navegador do cliente para fins acadêmicos, sem envio externo de dados."
         ),
     )
+    if contingencia_groq:
+        pdf.paragrafo(
+            "Transparência sobre Provedores na Execução: conforme registrado em "
+            "output/execucao_real.log, o provedor primário Gemini sofreu indisponibilidade "
+            "transitória após retries e o fallback via Groq assumiu pontualmente as etapas: "
+            f"{etapas_contingencia_str}. As demais etapas utilizaram diretamente o provedor primário Gemini."
+        )
+    else:
+        pdf.paragrafo(
+            "Transparência sobre Provedores na Execução: conforme registrado em "
+            "output/execucao_real.log, todas as inferências desta execução foram realizadas "
+            f"diretamente no provedor primário Gemini ({dados_log['modelo']}), sem uso de fallback."
+        )
 
     # Quesito 10
     pdf.titulo_quesito(10, "Declaração de Transparência sobre Ajustes Manuais")
