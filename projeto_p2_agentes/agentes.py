@@ -133,6 +133,73 @@ SCHEMA_QA_SEC: dict[str, Any] = {
 
 _CERCA_INICIO_RE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n?")
 _CERCA_FIM_RE = re.compile(r"\n?\s*```\s*$")
+_COMENTARIO_OU_STRING_RE = re.compile(
+    r'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`)'
+    r"|<!--[\s\S]*?-->"
+    r"|/\*[\s\S]*?\*/"
+)
+_BANNER_ACADEMICO_LITERAL = (
+    "Atenção: Este site é uma aplicação acadêmica demonstrativa. "
+    "O formulário não possui backend real e nenhuma mensagem será enviada externamente."
+)
+
+
+def _compactar_payload_groq(texto: str, limite_chars: int = 16000) -> str:
+    """Compacta prompts e trechos de código antes de enviar ao fallback Groq."""
+    if not texto:
+        return ""
+
+    normalizado = str(texto).replace("\r\n", "\n").replace("\r", "\n")
+    sem_comentarios = _COMENTARIO_OU_STRING_RE.sub(
+        lambda match: match.group(1) if match.group(1) is not None else "",
+        normalizado,
+    )
+    sem_indentacao = re.sub(r"\n[ \t]+", "\n", sem_comentarios)
+    sem_linhas_vazias = re.sub(r"\n{2,}", "\n", sem_indentacao)
+    compactado = re.sub(r"[ \t]{2,}", " ", sem_linhas_vazias).strip()
+
+    if len(compactado) <= limite_chars:
+        return compactado
+
+    # 1) Condensa narrativa extensa de "Plano de Tarefas:" preservando Requisitos Críticos.
+    compactado = re.sub(
+        r"(Plano de Tarefas:\n)[\s\S]*?(\nRequisitos Cr[ií]ticos:)",
+        r"\1[resumido para contingência TPM]\2",
+        compactado,
+        count=1,
+    )
+    if len(compactado) <= limite_chars:
+        return compactado
+
+    # 2) Condensa seção descritiva "=== DEMANDA PRINCIPAL ===" preservando banner literal e código.
+    match_demanda = re.search(
+        r"(=== DEMANDA PRINCIPAL ===\n)([\s\S]*?)(\n=== (?:PLANO DO COORDENADOR|APONTAMENTOS|CÓDIGO) ===)",
+        compactado,
+    )
+    if match_demanda:
+        corpo_demanda = match_demanda.group(2)
+        trecho_demanda = corpo_demanda[:800].rstrip()
+        if _BANNER_ACADEMICO_LITERAL in corpo_demanda and _BANNER_ACADEMICO_LITERAL not in trecho_demanda:
+            trecho_demanda = f"{trecho_demanda}\n{_BANNER_ACADEMICO_LITERAL}"
+        substituicao = (
+            f"{match_demanda.group(1)}{trecho_demanda}\n"
+            "[demanda condensada para respeitar limite TPM]"
+            f"{match_demanda.group(3)}"
+        )
+        compactado = (
+            compactado[: match_demanda.start()]
+            + substituicao
+            + compactado[match_demanda.end() :]
+        )
+    if len(compactado) <= limite_chars:
+        return compactado
+
+    # 3) Barreira final: preserva cabeçalho inicial e bloco final (código-fonte/requisitos).
+    marcador = "\n[trecho descritivo truncado para limite TPM]\n"
+    disponivel = max(200, limite_chars - len(marcador))
+    cabeca = min(1500, disponivel // 4)
+    cauda = disponivel - cabeca
+    return f"{compactado[:cabeca].rstrip()}{marcador}{compactado[-cauda:].lstrip()}"
 
 
 class ErroExecucaoAgente(RuntimeError):
@@ -171,7 +238,7 @@ class EquipeAgentes:
 
         self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
         self.groq_model = (
-            os.getenv("GROQ_MODEL", "openai/gpt-oss-20b") or "openai/gpt-oss-20b"
+            os.getenv("GROQ_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b"
         ).strip()
         self.groq_client: Any = None
         self.ultimo_motivo_contingencia: str = ""
@@ -362,34 +429,127 @@ class EquipeAgentes:
         prompt_usuario: str,
         identificador_agente: str = "Agente",
     ) -> dict[str, Any]:
-        """Executa chamada centralizada de contingência via Groq com saída JSON validada."""
+        """Executa chamada de contingência via Groq com rota por tags para Fullstack e JSON para demais agentes."""
         if not self.groq_client:
             raise ErroExecucaoAgente(
                 f"Cliente Groq não inicializado ou chave GROQ_API_KEY ausente ({identificador_agente})."
             )
 
-        chaves_descritas = self._descrever_schema_para_prompt(schema)
-        sistema_reforcado = (
-            f"{prompt_sistema}\n\n"
-            "IMPORTANTE: Responda EXCLUSIVAMENTE com um objeto JSON válido (sem cercas Markdown) "
-            f"contendo obrigatoriamente as chaves: {chaves_descritas}."
+        inicio = time.perf_counter()
+        chaves_esperadas = schema.get("required", [])
+        eh_fullstack = (
+            "arquivos" in chaves_esperadas
+            or "fullstack" in identificador_agente.lower()
         )
 
-        inicio = time.perf_counter()
-        try:
-            chat_completion = self.groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": sistema_reforcado},
-                    {"role": "user", "content": prompt_usuario},
-                ],
-                model=self.groq_model,
-                response_format={"type": "json_object"},
-                temperature=0.2,
+        # Preserva a compactação de entrada para respeitar o limite de 8.000 TPM
+        prompt_usuario_envio = _compactar_payload_groq(prompt_usuario)
+        if len(prompt_usuario_envio) < len(prompt_usuario):
+            print(
+                f"[CONTINGÊNCIA] Payload compactado para respeitar o limite de TPM da Groq "
+                f"({len(prompt_usuario)} -> {len(prompt_usuario_envio)} chars)."
             )
+
+        kwargs_groq: dict[str, Any] = {
+            "model": self.groq_model,
+            "temperature": 0.2,
+            "max_tokens": 8192 if eh_fullstack else 2048,
+        }
+        if any(m in self.groq_model.lower() for m in ["gpt-oss", "r1"]):
+            kwargs_groq["reasoning_effort"] = "low"
+
+        if eh_fullstack:
+            sistema_formatado = (
+                f"{prompt_sistema}\n\n"
+                "DIRETRIZ DE FORMATAÇÃO INEGOCIÁVEL:\n"
+                "NÃO retorne JSON. Retorne todo o código e conteúdo delimitado "
+                "EXCLUSIVAMENTE pelas seguintes tags:\n"
+                "<index_html>\n"
+                "<!DOCTYPE html>\n"
+                "...\n"
+                "</index_html>\n\n"
+                "<style_css>\n"
+                "/* CSS completo com :focus-visible e responsividade */\n"
+                "</style_css>\n\n"
+                "<script_js>\n"
+                "// JavaScript seguro usando estritamente textContent (SEM innerHTML)\n"
+                "</script_js>\n\n"
+                "<resumo_implementacao_md>\n"
+                "# Resumo da Implementação\n"
+                "...\n"
+                "</resumo_implementacao_md>\n"
+                "Gere os arquivos completos, sem cercas markdown fora das tags e "
+                "sem truncar o código."
+            )
+        else:
+            kwargs_groq["response_format"] = {"type": "json_object"}
+            chaves_descritas = self._descrever_schema_para_prompt(schema)
+            sistema_formatado = (
+                f"{prompt_sistema}\n\n"
+                "IMPORTANTE: Sua resposta DEVE ser estritamente um único objeto JSON válido "
+                f"contendo obrigatoriamente as chaves: {chaves_descritas}.\n"
+                "Não inclua texto introdutório, explicações ou caracteres fora do JSON."
+            )
+
+        sistema_formatado = re.sub(r"\n[ \t]+", "\n", sistema_formatado)
+        sistema_formatado = re.sub(r"\n{2,}", "\n", sistema_formatado)
+        sistema_formatado = re.sub(r"[ \t]{2,}", " ", sistema_formatado).strip()
+
+        mensagens = [
+            {"role": "system", "content": sistema_formatado},
+            {"role": "user", "content": prompt_usuario_envio},
+        ]
+
+        def _executar_create(params: dict[str, Any]) -> Any:
+            try:
+                return self.groq_client.chat.completions.create(
+                    messages=mensagens, **params
+                )
+            except TypeError as te:
+                if "reasoning_effort" in str(te) and "reasoning_effort" in params:
+                    sem_reasoning = dict(params)
+                    sem_reasoning.pop("reasoning_effort", None)
+                    return self.groq_client.chat.completions.create(
+                        messages=mensagens, **sem_reasoning
+                    )
+                raise
+
+        try:
+            chat_completion = _executar_create(kwargs_groq)
         except Exception as exc:
-            raise ErroExecucaoAgente(
-                f"Falha na chamada de contingência via Groq ({self.groq_model}) para {identificador_agente}: {exc}"
-            ) from exc
+            msg_groq = str(exc).lower()
+            eh_erro_validacao_json = (
+                not eh_fullstack
+                and ("json_validate_failed" in msg_groq or ("400" in msg_groq and "json" in msg_groq))
+            )
+            if eh_erro_validacao_json:
+                print(
+                    f"[CONTINGÊNCIA] Groq retornou json_validate_failed para {identificador_agente}; "
+                    "tentando recuperação sem response_format..."
+                )
+                params_rec = dict(kwargs_groq)
+                params_rec.pop("response_format", None)
+                mensagens[0] = {
+                    "role": "system",
+                    "content": (
+                        f"{sistema_formatado}\n"
+                        "RETORNE SOMENTE O OBJETO JSON PURO começando com { e terminando com }, "
+                        "sem cercas Markdown e sem texto explicativo."
+                    ),
+                }
+                try:
+                    chat_completion = _executar_create(params_rec)
+                except Exception as exc_rec:
+                    raise ErroExecucaoAgente(
+                        f"Falha na recuperação de contingência via Groq ({self.groq_model}) "
+                        f"para {identificador_agente}: {exc_rec}"
+                    ) from exc_rec
+            else:
+                raise ErroExecucaoAgente(
+                    f"Falha na chamada de contingência via Groq ({self.groq_model}) "
+                    f"para {identificador_agente}: {exc}"
+                ) from exc
+
         duracao = float(time.perf_counter() - inicio)
 
         conteudo = ""
@@ -397,42 +557,80 @@ class EquipeAgentes:
         if choices and len(choices) > 0:
             conteudo = getattr(choices[0].message, "content", None) or ""
 
-        conteudo_limpo = conteudo.strip()
-        if conteudo_limpo.startswith("```"):
-            linhas = conteudo_limpo.splitlines()
-            if linhas and linhas[0].startswith("```"):
-                linhas = linhas[1:]
-            if linhas and linhas[-1].startswith("```"):
-                linhas = linhas[:-1]
-            conteudo_limpo = "\n".join(linhas).strip()
-
-        if not conteudo_limpo:
-            raise ErroExecucaoAgente(
-                f"A resposta de contingência da Groq para {identificador_agente} veio vazia."
-            )
-
-        try:
-            dados = json.loads(conteudo_limpo)
-        except json.JSONDecodeError as exc:
-            raise ErroExecucaoAgente(
-                f"Falha ao fazer parse JSON da resposta da Groq ({identificador_agente}): {exc}"
-            ) from exc
-
-        dados_validados = self._validar_campos_schema(
-            identificador_agente, dados, schema.get("required", [])
-        )
-
-        if "arquivos" in schema.get("properties", {}):
-            arquivos = dados_validados.get("arquivos")
-            if not isinstance(arquivos, dict):
-                raise ErroExecucaoAgente(
-                    f"Campo 'arquivos' retornado pela Groq ({identificador_agente}) não é um objeto."
-                )
-            for chave_arq in ("index_html", "style_css", "script_js"):
-                if chave_arq not in arquivos or not str(arquivos[chave_arq]).strip():
+        if eh_fullstack:
+            def _extrair_bloco(tag: str, obrigatorio: bool = True) -> str:
+                padrao = rf"<{tag}>(.*?)</{tag}>"
+                match = re.search(padrao, conteudo, re.DOTALL | re.IGNORECASE)
+                if match:
+                    texto = match.group(1).strip()
+                    linhas = texto.splitlines()
+                    if linhas and linhas[0].strip().startswith("```"):
+                        linhas = linhas[1:]
+                    if linhas and linhas[-1].strip().startswith("```"):
+                        linhas = linhas[:-1]
+                    return "\n".join(linhas).strip()
+                if obrigatorio:
                     raise ErroExecucaoAgente(
-                        f"Arquivo '{chave_arq}' ausente ou vazio na resposta da Groq ({identificador_agente})."
+                        f"[{identificador_agente}] Tag obrigatória <{tag}> não "
+                        "encontrada na resposta da Groq."
                     )
+                return ""
+
+            index_html = _extrair_bloco("index_html", obrigatorio=True)
+            style_css = _extrair_bloco("style_css", obrigatorio=True)
+            script_js = _extrair_bloco("script_js", obrigatorio=True)
+            if not index_html or not style_css or not script_js:
+                raise ErroExecucaoAgente(
+                    f"[{identificador_agente}] Uma ou mais tags de código (<index_html>, "
+                    "<style_css>, <script_js>) retornaram conteúdo vazio na Groq."
+                )
+
+            resumo_md = _extrair_bloco("resumo_implementacao_md", obrigatorio=False)
+            if not resumo_md:
+                resumo_md = (
+                    "# Resumo de Implementação (Groq Fallback)\n"
+                    "Arquivos gerados com sucesso via contingência."
+                )
+
+            dados: dict[str, Any] = {
+                "arquivos": {
+                    "index_html": index_html,
+                    "style_css": style_css,
+                    "script_js": script_js,
+                },
+                "resumo_implementacao_md": resumo_md,
+                "correcoes_aplicadas": [],
+            }
+        else:
+            conteudo_limpo = conteudo.strip()
+            if conteudo_limpo.startswith("```"):
+                linhas = conteudo_limpo.splitlines()
+                if linhas and linhas[0].strip().startswith("```"):
+                    linhas = linhas[1:]
+                if linhas and linhas[-1].strip().startswith("```"):
+                    linhas = linhas[:-1]
+                conteudo_limpo = "\n".join(linhas).strip()
+
+            idx_inicio = conteudo_limpo.find("{")
+            idx_fim = conteudo_limpo.rfind("}")
+            if idx_inicio != -1 and idx_fim > idx_inicio:
+                conteudo_limpo = conteudo_limpo[idx_inicio : idx_fim + 1]
+
+            if not conteudo_limpo:
+                raise ErroExecucaoAgente(
+                    f"A resposta de contingência da Groq para {identificador_agente} veio vazia."
+                )
+
+            try:
+                dados = json.loads(conteudo_limpo, strict=False)
+            except json.JSONDecodeError as exc:
+                raise ErroExecucaoAgente(
+                    f"Falha ao fazer parse JSON da resposta da Groq ({identificador_agente}): {exc}"
+                ) from exc
+
+            dados = self._validar_campos_schema(
+                identificador_agente, dados, chaves_esperadas
+            )
 
         usage = getattr(chat_completion, "usage", None)
         prompt_t = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
@@ -445,7 +643,7 @@ class EquipeAgentes:
         tokens = {"prompt": prompt_t, "saida": saida_t, "total": total_t}
 
         return {
-            "dados": dados_validados,
+            "dados": dados,
             "tokens": tokens,
             "duracao": duracao,
             "provedor": f"Groq ({self.groq_model})",

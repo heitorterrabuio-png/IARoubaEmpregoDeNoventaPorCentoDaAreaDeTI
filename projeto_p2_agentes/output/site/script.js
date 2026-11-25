@@ -1,41 +1,50 @@
 document.addEventListener('DOMContentLoaded', function () {
-    const contactForm = document.getElementById('contactForm');
-    const formFeedback = document.getElementById('formFeedback');
+  var form = document.getElementById('form-contato');
+  var feedbackArea = document.getElementById('feedback-mensagem');
 
-    if (contactForm) {
-        contactForm.addEventListener('submit', function (event) {
-            event.preventDefault();
+  if (!form || !feedbackArea) {
+    return;
+  }
 
-            const nomeInput = document.getElementById('nome');
-            const emailInput = document.getElementById('email');
-            const assuntoInput = document.getElementById('assunto');
-            const mensagemInput = document.getElementById('mensagem');
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
 
-            const nome = nomeInput.value.trim();
-            const email = emailInput.value.trim();
-            const assunto = assuntoInput.value.trim();
-            const mensagem = mensagemInput.value.trim();
+    var campoNome = document.getElementById('nome');
+    var campoEmail = document.getElementById('email');
+    var campoAssunto = document.getElementById('assunto');
+    var campoMensagem = document.getElementById('mensagem');
 
-            formFeedback.className = 'form-feedback';
-            formFeedback.textContent = '';
+    var nome = campoNome ? campoNome.value.trim() : '';
+    var email = campoEmail ? campoEmail.value.trim() : '';
+    var assunto = campoAssunto ? campoAssunto.value.trim() : '';
+    var mensagem = campoMensagem ? campoMensagem.value.trim() : '';
 
-            if (!nome || !email || !assunto || !mensagem) {
-                formFeedback.className = 'form-feedback error';
-                formFeedback.textContent = 'Por favor, preencha todos os campos obrigatórios do formulário.';
-                return;
-            }
+    // resetar estado visual do feedback
+    feedbackArea.className = 'feedback-area';
+    feedbackArea.textContent = '';
 
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                formFeedback.className = 'form-feedback error';
-                formFeedback.textContent = 'Por favor, insira um endereço de e-mail válido.';
-                return;
-            }
-
-            formFeedback.className = 'form-feedback success';
-            formFeedback.textContent = 'Mensagem simulada com sucesso! (Atenção: Aplicação acadêmica demonstrativa, nenhum dado foi enviado externamente).';
-            
-            contactForm.reset();
-        });
+    // validacao de campos vazios
+    if (!nome || !email || !assunto || !mensagem) {
+      exibirFeedback('Por favor, preencha todos os campos do formulário antes de enviar.', 'erro');
+      return;
     }
+
+    // validacao de formato de e-mail com regex segura
+    var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      exibirFeedback('Por favor, insira um endereço de e-mail válido (exemplo: nome@dominio.com).', 'erro');
+      return;
+    }
+
+    // mensagem de sucesso demonstrativa
+    exibirFeedback('Mensagem enviada com sucesso! Esta é uma demonstração acadêmica e nenhum dado foi transmitido para servidores externos.', 'sucesso');
+
+    // limpeza dos campos
+    form.reset();
+  });
+
+  function exibirFeedback(texto, tipo) {
+    feedbackArea.textContent = texto;
+    feedbackArea.className = 'feedback-area ' + tipo;
+  }
 });

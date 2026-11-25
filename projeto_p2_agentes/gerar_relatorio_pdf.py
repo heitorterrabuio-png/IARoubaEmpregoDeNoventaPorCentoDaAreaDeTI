@@ -615,7 +615,7 @@ def gerar_pdf() -> int:
     parecer_qa_md = (DIR_DOCS / "parecer_qa.md").read_text(encoding="utf-8")
     dados_site = _inspecionar_site_estatico()
 
-    nome_aluno = os.getenv("NOME_ALUNO", "Equipe Acadêmica P2").strip()
+    nome_aluno = os.getenv("NOME_ALUNO", "Heitor Terrabuio").strip()
     data_geracao = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     arquiteto_ativo = bool(dados_log["arquiteto_ativo"])

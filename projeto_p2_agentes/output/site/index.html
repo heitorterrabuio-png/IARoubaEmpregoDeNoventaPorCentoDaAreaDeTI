@@ -1,118 +1,143 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EcoCiclo Consultoria Ambiental e Gestão de Resíduos</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Porsche Enthusiasts &amp; Heritage Showcase</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="academic-banner" role="region" aria-label="Aviso Acadêmico">
-        <p>Atenção: Este site é uma aplicação acadêmica demonstrativa. O formulário não possui backend real e nenhuma mensagem será enviada externamente.</p>
+  <div class="academic-banner" role="alert">
+    Atenção: Este site é uma aplicação acadêmica demonstrativa. O formulário não possui backend real e nenhuma mensagem será enviada externamente.
+  </div>
+
+  <header class="header-principal">
+    <div class="header-container">
+      <a href="#inicio" class="logo">Porsche Showcase</a>
+      <nav class="nav-principal" aria-label="Navegação Principal">
+        <ul>
+          <li><a href="#inicio">Início</a></li>
+          <li><a href="#historia">História &amp; Tradição</a></li>
+          <li><a href="#modelos">Modelos Emblemáticos</a></li>
+          <li><a href="#contato">Contato</a></li>
+        </ul>
+      </nav>
     </div>
-    <header>
-        <div class="container header-container">
-            <a href="#inicio" class="logo">Eco<span>Ciclo</span></a>
-            <nav>
-                <ul class="nav-links">
-                    <li><a href="#inicio">Início</a></li>
-                    <li><a href="#sobre">Sobre Nós</a></li>
-                    <li><a href="#solucoes">Soluções</a></li>
-                    <li><a href="#contato">Contato</a></li>
-                </ul>
-            </nav>
+  </header>
+
+  <main>
+    <section id="inicio" class="hero-section">
+      <div class="hero-content">
+        <h1>Porsche Enthusiasts &amp; Heritage Showcase</h1>
+        <p class="hero-subtitle">
+          Engenharia de alta performance, precisão alemã e uma paixão inabalável pela evolução do automobilismo esportivo.
+        </p>
+        <div class="hero-actions">
+          <a href="#modelos" class="btn btn-primary">Conheça os Modelos</a>
+          <a href="#contato" class="btn btn-secondary">Fale Conosco</a>
         </div>
-    </header>
-    <main>
-        <section id="inicio" class="hero">
-            <div class="container hero-content">
-                <h1>Gestão de Resíduos Inteligente para Condomínios e PMEs</h1>
-                <p>Transforme a responsabilidade ambiental em eficiência operacional. A EcoCiclo oferece consultoria especializada para reduzir custos, desviar resíduos de aterros e promover a sustentabilidade corporativa e residencial.</p>
-                <div class="hero-buttons">
-                    <a href="#solucoes" class="btn btn-primary">Conheça Nossas Soluções</a>
-                    <a href="#contato" class="btn btn-secondary">Fale Conosco</a>
-                </div>
-            </div>
-        </section>
-        <section id="sobre" class="section sobre">
-            <div class="container">
-                <h2>Sobre Nós & Impacto</h2>
-                <div class="sobre-grid">
-                    <div class="sobre-texto">
-                        <p>Fundada com o propósito de acelerar a transição para a economia circular, a <strong>EcoCiclo</strong> capacita condomínios e pequenas e médias empresas (PMEs) a gerenciarem seus resíduos com excelência, conformidade legal e engajamento comunitário.</p>
-                        <p>Nossa missão é simplificar a sustentabilidade através de diagnósticos precisos, capacitação prática e monitoramento contínuo de indicadores ambientais.</p>
-                    </div>
-                    <div class="metrics-container">
-                        <article class="metric-card">
-                            <h3>+45%</h3>
-                            <p>Taxa média de desvio de aterro</p>
-                        </article>
-                        <article class="metric-card">
-                            <h3>120+</h3>
-                            <p>Condomínios e PMEs atendidas</p>
-                        </article>
-                        <article class="metric-card">
-                            <h3>R$ 350k</h3>
-                            <p>Economia em custos operacionais</p>
-                        </article>
-                    </div>
-                </div>
-            </div>
-        </section>
-        <section id="solucoes" class="section solucoes">
-            <div class="container">
-                <h2>Nossas Soluções</h2>
-                <div class="cards-grid">
-                    <article class="card">
-                        <h3>PGRS e Diagnóstico Ambiental</h3>
-                        <p>Elaboração completa do Plano de Gerenciamento de Resíduos Sólidos (PGRS) exigido por órgãos ambientais, com inventário detalhado e mapeamento de gargalos operacionais.</p>
-                    </article>
-                    <article class="card">
-                        <h3>Implantação de Coleta Seletiva e Capacitação</h3>
-                        <p>Treinamento prático para equipes, funcionários e moradores, estruturação de ecopontos e sinalização visual para maximizar a separação correta na fonte.</p>
-                    </article>
-                    <article class="card">
-                        <h3>Monitoramento de Indicadores e Logística Reversa</h3>
-                        <p>Acompanhamento mensal de métricas de reciclagem, emissão de relatórios de impacto ESG e conexão com operadores homologados para logística reversa.</p>
-                    </article>
-                </div>
-            </div>
-        </section>
-        <section id="contato" class="section contato">
-            <div class="container">
-                <h2>Entre em Contato</h2>
-                <div class="academic-banner form-banner" role="region" aria-label="Aviso do Formulário">
-                    <p>Atenção: Este site é uma aplicação acadêmica demonstrativa. O formulário não possui backend real e nenhuma mensagem será enviada externamente.</p>
-                </div>
-                <form id="contactForm" novalidate>
-                    <div class="form-group">
-                        <label for="nome">Nome:</label>
-                        <input type="text" id="nome" name="nome" required autocomplete="name">
-                    </div>
-                    <div class="form-group">
-                        <label for="email">E-mail:</label>
-                        <input type="email" id="email" name="email" required autocomplete="email">
-                    </div>
-                    <div class="form-group">
-                        <label for="assunto">Assunto:</label>
-                        <input type="text" id="assunto" name="assunto" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="mensagem">Mensagem:</label>
-                        <textarea id="mensagem" name="mensagem" rows="5" required></textarea>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Enviar Mensagem</button>
-                    <div id="formFeedback" class="form-feedback" aria-live="polite"></div>
-                </form>
-            </div>
-        </section>
-    </main>
-    <footer>
-        <div class="container footer-content">
-            <p>&copy; 2025 EcoCiclo Consultoria Ambiental e Gestão de Resíduos. Todos os direitos reservados.</p>
-            <p class="academic-footer-note">Projeto Acadêmico Demonstrativo - Sem fins lucrativos ou transacionais reais.</p>
+      </div>
+    </section>
+
+    <section id="historia" class="section-historia">
+      <div class="container">
+        <h2>História &amp; Tradição</h2>
+        <p class="historia-intro">
+          Desde a fundação por Ferdinand Porsche em Stuttgart, a marca estabeleceu-se como referência mundial em engenharia automotiva de precisão. Combinando tradição artesanal com inovações tecnológicas de ponta nas pistas de corrida, a Porsche transformou o desempenho puro em uma filosofia de vida.
+        </p>
+
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-value">19+</span>
+            <span class="metric-label">Vitórias gerais nas 24 Horas de Le Mans</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value">2,8 s</span>
+            <span class="metric-label">Aceleração de 0 a 100 km/h no Taycan Turbo S</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value">+70%</span>
+            <span class="metric-label">De todos os veículos Porsche já produzidos ainda em condições de rodagem</span>
+          </div>
         </div>
-    </footer>
-    <script src="script.js"></script>
+      </div>
+    </section>
+
+    <section id="modelos" class="section-modelos">
+      <div class="container">
+        <h2>Modelos Emblemáticos</h2>
+        <div class="cards-grid">
+          <article class="card-modelo">
+            <h3>Porsche 911 - O Ícone Atemporal com Motor Traseiro</h3>
+            <p>
+              Lançado em 1963, o Porsche 911 representa o ápice da esportividade com motor traseiro. Sua silhueta inconfundível unida à evolução tecnológica contínua proporciona dynamicidade incomparável tanto nas pistas quanto na condução diária.
+            </p>
+          </article>
+
+          <article class="card-modelo">
+            <h3>Porsche Taycan - A Revolução da Mobilidade 100% Elétrica</h3>
+            <p>
+              O Taycan estabelece novos parâmetros para a eletromobilidade de alta performance. Com arquitetura de 800 volts e entrega imediata de torque, preserva a identidade e o DNA de corrida característicos da marca de Stuttgart.
+            </p>
+          </article>
+
+          <article class="card-modelo">
+            <h3>Porsche 718 Cayman - A Pura Esportividade de Motor Central</h3>
+            <p>
+              Com distribuição perfeita de peso e concepção de motor central, o 718 Cayman oferece agilidade superior nas curvas. É a expressão máxima da resposta direta e da conexão entre motorista, máquina e a estrada.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="contato" class="section-contato">
+      <div class="container">
+        <h2>Contato</h2>
+        <div class="academic-banner-inline">
+          Atenção: Este site é uma aplicação acadêmica demonstrativa. O formulário não possui backend real e nenhuma mensagem será enviada externamente.
+        </div>
+        <p class="contato-description">
+          Utilize o formulário abaixo para simular o envio de mensagens para a comunidade de entusiastas.
+        </p>
+
+        <form id="form-contato" novalidate>
+          <div class="form-group">
+            <label for="nome">Nome</label>
+            <input type="text" id="nome" name="nome" autocomplete="name">
+          </div>
+
+          <div class="form-group">
+            <label for="email">E-mail</label>
+            <input type="email" id="email" name="email" autocomplete="email">
+          </div>
+
+          <div class="form-group">
+            <label for="assunto">Assunto</label>
+            <input type="text" id="assunto" name="assunto">
+          </div>
+
+          <div class="form-group">
+            <label for="mensagem">Mensagem</label>
+            <textarea id="mensagem" name="mensagem" rows="5"></textarea>
+          </div>
+
+          <button type="submit" class="btn btn-submit">Enviar Mensagem</button>
+          <div id="feedback-mensagem" class="feedback-area" aria-live="polite"></div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer-principal">
+    <div class="container">
+      <p>&copy; Porsche Enthusiasts &amp; Heritage Showcase - Aplicação Acadêmica Demonstrativa.</p>
+      <p class="footer-subtext">
+        Desenvolvido para fins educacionais. Não possui vínculo oficial com a Dr. Ing. h.c. F. Porsche AG.
+      </p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
 </body>
 </html>

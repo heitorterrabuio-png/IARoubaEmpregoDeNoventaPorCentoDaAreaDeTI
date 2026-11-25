@@ -1,25 +1,26 @@
-DEMANDA DE PROJETO WEB: PetCare 24h - Clínica Veterinária
+DEMANDA DE PROJETO WEB: Porsche Enthusiasts & Heritage Showcase - Portal Demonstrativo de Veículos de Alta Performance
 
 1. CONTEXTO E OBJETIVO
-Desenvolver uma aplicação web estática completa, acessível, responsiva e segura para a "PetCare 24h - Clínica Veterinária", voltada para tutores de animais de companhia, famílias e pequenos negócios que possuam pets. O objetivo da aplicação é apresentar os serviços de saúde animal, evidenciar métricas de desempenho e disponibilizar um formulário de contato demonstrativo com validação no navegador.
+Desenvolver uma aplicação web estática completa, acessível, responsiva e segura para o "Porsche Enthusiasts & Heritage Showcase", voltada para entusiastas automotivos, colecionadores e admiradores da marca Porsche.
+O objetivo da aplicação é apresentar a história, a engenharia de alta performance e os modelos emblemáticos da marca, evidenciar métricas de desempenho e tradição no automobilismo esportivo e disponibilizar um formulário de contato demonstrativo com validação no navegador.
 
 2. ESTRUTURA VISUAL, CONTEÚDO E SEÇÕES OBRIGATÓRIAS
-- Cabeçalho (<header>) com identificação da marca PetCare 24h e menu de navegação semântico (<nav>) com links funcionais por âncora para as 4 seções:
+- Cabeçalho (<header>) com identificação da marca Porsche Showcase e menu de navegação semântico (<nav>) com links funcionais por âncora para as 4 seções:
   1) Início (#inicio)
-  2) Sobre Nós (#sobre)
-  3) Serviços (#servicos)
+  2) História & Tradição (#historia)
+  3) Modelos Emblemáticos (#modelos)
   4) Contato (#contato)
 - Banner obrigatório em destaque no site (visível logo no topo ou área principal e reforçado próximo ao formulário), exibindo literalmente o seguinte texto:
   "Atenção: Este site é uma aplicação acadêmica demonstrativa. O formulário não possui backend real e nenhuma mensagem será enviada externamente."
 - Seção Início (#inicio):
-  - Área Hero com título principal (<h1>), proposta de valor clara para tutores que buscam atendimento veterinário 24h, e botão/link de chamada para ação (CTA) direcionando para #contato ou #servicos.
-- Seção Sobre Nós (#sobre):
-  - Título (<h2>), missão e valores da PetCare 24h e bloco de métricas/indicadores de desempenho (por exemplo: atendimentos mensais, taxa de recuperação, número de vacinas aplicadas).
-- Seção Serviços (#servicos):
-  - Título (<h2>) e exatamente 3 cards de serviços estruturados semanticamente (<article> com <h3>):
-    1) Consultas e Exames Clínicos
-    2) Cirurgias e Emergências 24h
-    3) Vacinação e Programa de Saúde Preventiva
+  - Área Hero com título principal (<h1>), proposta de valor clara para apaixonados pela engenharia alemã de alta performance, e botão/link de chamada para ação (CTA) direcionando para #contato ou #modelos.
+- Seção História & Tradição (#historia):
+  - Título (<h2>), trajetória histórica da lendária fabricante de Stuttgart e bloco de métricas/indicadores de impacto e performance (por exemplo: mais de 19 vitórias gerais nas 24 Horas de Le Mans, aceleração de 0 a 100 km/h em 2,8 segundos no Taycan Turbo S e mais de 70% de todos os veículos Porsche produzidos ainda em condições de rodagem).
+- Seção Modelos Emblemáticos (#modelos):
+  - Título (<h2>) e exatamente 3 cards de veículos estruturados semanticamente (<article> com <h3>):
+    1) Porsche 911 - O Ícone Atemporal com Motor Traseiro
+    2) Porsche Taycan - A Revolução da Mobilidade 100% Elétrica
+    3) Porsche 718 Cayman - A Pura Esportividade de Motor Central
 - Seção Contato (#contato):
   - Título (<h2>), lembrete claro de que se trata de simulação acadêmica sem backend e formulário acessível (<form novalidate>) contendo os seguintes campos obrigatórios:
     1) Nome (id="nome", <label for="nome">)
@@ -27,7 +28,7 @@ Desenvolver uma aplicação web estática completa, acessível, responsiva e seg
     3) Assunto (id="assunto", <label for="assunto">)
     4) Mensagem (id="mensagem", <textarea>, <label for="mensagem">)
   - Botão de envio acessível e região de feedback de erro/sucesso com aria-live="polite".
-- Rodapé (<footer>) semântico com identificação institucional da PetCare 24h e nota acadêmica.
+- Rodapé (<footer>) semântico com identificação institucional do Porsche Showcase e nota acadêmica.
 
 3. REQUISITOS TÉCNICOS, ACESSIBILIDADE E SEGURANÇA
 - HTML5 semântico com lang="pt-BR", metas charset="UTF-8" e viewport responsiva, uso adequado de <header>, <nav>, <main>, <section>, <article> e <footer>, e hierarquia rigorosa de títulos (<h1>, <h2>, <h3> sem pular níveis).
@@ -35,7 +36,7 @@ Desenvolver uma aplicação web estática completa, acessível, responsiva e seg
   - Navegação integral via teclado usando a tecla Tab em ordem lógica.
   - Estilo de foco claramente visível utilizando :focus-visible em links, botões e campos do formulário.
   - Todos os campos do formulário associados a um <label> explícito via id/for.
-  - Paleta de cores com contraste legível entre texto e fundo (ex.: azul escuro institucional, off-white/branco e cinza claro).
+  - Paleta de cores com contraste legível entre texto e fundo (ex.: vermelho Porsche racing, preto cadmiado, prata metálico e off-white).
 - CSS3 modular (style.css) com abordagem mobile-first e media queries (@media) garantindo boa leitura e alinhamento em smartphones, tablets e desktops sem rolagem horizontal indesejada. Não utilizar frameworks ou CDNs externas.
 - JavaScript vanilla seguro (script.js):
   - Validação completa no envio do formulário: bloquear envio se Nome, E-mail, Assunto ou Mensagem estiverem vazios (após trim) e validar formato de e-mail com expressão regular segura.
